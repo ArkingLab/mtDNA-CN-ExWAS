@@ -6,7 +6,7 @@ Rare variant association testing to mitochondrial copy number in UK Biobank
 
 This repo contains code (pipeline, scripts, and analysis notebooks) relating to Pillalamarri et al. 2023 HGG Advances "Whole-exome sequencing in 415,422 individuals identifies rare variants associated with mitochondrial DNA copy number" (PMID 36311265, doi: 10.1016/j.xhgg.2022.100147).
 
-This repository is a snapshot of a private repository with more comprehensive access to a variety of resources for the project along with results from the single- and rare-variant burden testing. Please reach out to `vpillal1@alumni.jh.edu` or `darking@jhmi.edu` for raw BOLT-LMM results from single- and GENESIS aggregate rare-variant burden testing results.
+This repository is a **snapshot of a private repository** (__ArkingLab/mito_rare-varaint__) with more comprehensive access to a variety of resources for the project along with results from the single- and rare-variant burden testing. Please reach out to `vpillal1@alumni.jh.edu` or `darking@jhmi.edu` for raw BOLT-LMM results from single- and GENESIS aggregate rare-variant burden testing results.
 
 ## Study Design
 
@@ -57,7 +57,7 @@ BiocManager::install("GENESIS")
   ```
   Run as:
   # On UKB RAP CLI:
-  #  <log into UKB RAP using `dx`>
+  #  <log into UKB RAP using `dx login`>
   #       qrsh -now y -pe local 16 -l h_vmem=5G,mem_free=5G,h_fsize=10G
   # OPTIONAL:
   #       cd /dcs01/arking/arkinglab/software/src/BOLT-LMM/
