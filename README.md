@@ -48,11 +48,11 @@ pVCFs: `/dcl01/arking/data/static/UKBiobank/WES/pVCF`
 
 plink: `/dcl01/arking/data/static/UKBiobank/WES/plink`
 
-note: pVCFs combine multiallelic sites into one record, while plink splits them; the plink *.bim* file reflects this difference
+NOTE: pVCFs combine multiallelic sites into one record, while plink splits them; the plink *.bim* file reflects this difference
 
-## Gene lists can be found in the "resources" folder in this repo, or on JHPCE at /dcl01/arking/data/static/UKBiobank/gene_lists.
+-- Gene lists can be found in the "resources" folder in this repo, or on JHPCE at /dcl01/arking/data/static/UKBiobank/gene_lists.
 
-gwas_genes.txt: Genes identified from GWAS
+-- gwas_genes.txt: Genes identified from GWAS
 depletion_genes.txt: 15 genes known to be causal for mtDNA depletion syndromes
 
-## Mitocarta gene pathways are located on the server, here: /dcs01/arking/arkinglab/resources/mitoCarta/Human.MitoPathways3.0.gmx
+-- Mitocarta gene pathways are located on the server, here: /dcs01/arking/arkinglab/resources/mitoCarta/Human.MitoPathways3.0.gmx
