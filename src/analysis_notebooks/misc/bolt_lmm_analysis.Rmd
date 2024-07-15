@@ -1,0 +1,78 @@
+---
+title: "BOLT-LMM Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Run 2 - covariates:
+- 133 GWA SNPs associated with mtDNA CN (GWAS from the lab)
+- wes.batch
+
+Data location:
+`/dcs04/arking/data/active/projects/mito_rare-variant/lmm_adjusted/run2`
+
+```{r}
+library(vroom)
+library(dplyr)
+library(readr)
+library(stringr)
+library(QCEWAS)
+library(ggplot2)
+library(hrbrthemes)
+library(gt)
+
+setwd('~/projects/mito_rare-variant/lmm_adjusted/')
+source('~/projects/mito_rare-variant/scripts/qqunif.plot.R')
+
+```
+
+# read in sorted results
+```{r}
+# t generated on JHPCE
+# t <- t %>% filter(A1FREQ !=0) %>% arrange(P_BOLT_LMM)
+t <- vroom('./run2/chr1-22_X.stats.adjustedforGWA_snps.sorted', progress=T)
+
+# QQ plot and manhattan
+data <- t %>% select(CHR, MAPINFO=BP, P_VAL=P_BOLT_LMM)
+EWAS_plots(
+  dataset = data,
+  plot_QQ = T,
+  plot_Man = T,
+  high_quality_plots = T,
+  plot_QQ_bands = F,
+  save_name = 'Exomes only, adjusted for GWA SNPs'
+)
+
+```
+
+# bonferroni passing variants
+```{r}
+t.bonf <- t %>% filter(P_BOLT_LMM <= (0.05 / 15082944))
+N_Samples=180801
+t.bonf <- t.bonf %>%
+  mutate(singleton=as.factor(ifelse(A1FREQ <= 5.55e-6, 1 ,0))) %>%
+  mutate(MAC=round((A1FREQ * N_Samples) - (F_MISS * N_Samples) )) %>%
+  select(SNP, CHR, BP, A1=ALLELE1, A0=ALLELE0, MAC, A1FREQ, F_MISS, BETA, SE, P_BOLT_LMM, singleton) %>%
+  arrange(desc(A1FREQ))
+gt(t.bonf)
+
+t.bonf %>%
+  ggplot(aes(x=A1FREQ, y=abs(BETA), color=singleton)) +
+  geom_point(aes(size=-log10(P_BOLT_LMM)), alpha=1/2) +
+  scale_x_log10() +
+  theme_ipsum_rc() +
+  theme(legend.position = 'bottom') +
+  ggtitle('Bonferroni Passing Variants')
+
+```
+
+
+
+
+
+
+
+
+
+

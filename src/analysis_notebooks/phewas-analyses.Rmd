@@ -1,0 +1,206 @@
+---
+title: "PheWAS Analysis"
+author: "Vamsee Pillalamarri"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PheWAS Analysis
+
+Phenome-Wide Association Studies (PheWAS) on UK Biobank data for rare variants 
+associated with mitochondrial DNA copy number.
+
+## Load Required Libraries
+
+```{r load_libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(readr)
+library(PheWAS)
+library(TopmedPipeline)
+library(ggplot2)
+library(gt)
+```
+
+## Load Source Functions
+
+```{r load_source}
+source('src/phewas_functions.R')
+```
+
+## Data Preparation
+### Load data
+```{r}
+# Pheno dataframe containing UKB data
+alldata<-readRDS(file="/dcl01/arking/data/static/UKBiobank/GWAS_data/pheno/ukbCombined_031521.rds")
+alldata <- alldata %>% as_tibble()
+
+# Filter to IIDs in study (n=180256)
+k <- read.table('~/mtrv/burden/genesis/gds/n180256.keep.IIDs')
+k <- k$V2
+alldata <- alldata %>% filter(f.eid %in% k)
+alldata <- alldata %>% select(f.eid, colnames(alldata)[stringr::str_detect(colnames(alldata), "f.41270")])
+
+```
+
+### Load and Process ICD10 Codes
+```{r process_icd10_codes}
+icd10_codes <- list()
+for(i in 1:nrow(alldata)) {
+  message(i)
+  icd10_codes[[i]] <- get.pheno_matrix(codes = alldata[i, ])
+}
+icd10_codes <- as_tibble(bind_rows(icd10_codes))
+```
+
+### Prepare UK Biobank Data
+
+```{r prepare_ukb_data}
+ukb.age_sex <- alldata %>% 
+  select(id=f.eid, age=f.21022.0.0, sex=f.31.0.0) %>% 
+  mutate(sex2=ifelse(sex=="Male",'M','F')) %>% 
+  select(id, age, sex=sex2) %>%
+  as_tibble()
+
+ukb.pcs <- alldata %>% select(id=f.eid, starts_with("PC")) %>% as_tibble()
+ukb.mtDNA <- alldata %>% select(id=f.eid, contains('mtDNA'), starts_with('arrayCN')) %>% as_tibble()
+ukb.misc <- alldata %>% select(id=f.eid, genotyping.array, in.white.British.ancestry.subset, used.in.pca.calculation) %>% as_tibble()
+```
+
+### Convert ICD Codes to Phecodes
+
+```{r convert_to_phecodes}
+my_icd_map = PheWAS::phecode_map_icd10 %>% mutate(code=gsub("[.]","",code))
+icd10_phecodes <- createPhenotypes(id.vocab.code.index=icd10_codes, id.sex=id.sex, 
+                                   full.population.ids=id.sex$id, min.code.count=1, 
+                                   vocabulary.map=my_icd_map) %>% as_tibble()
+```
+
+## PheWAS Analyses
+
+### SAMHD1 Carriers
+```{r samhd1_analysis}
+# MAC >= 6
+samhd1.carrier <- read.csv('~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_gteq_6',
+                           col.names = c('id', 'SAMHD1.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(samhd1.carrier, by='id')
+results_samhd1.carrier_mac_gteq6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='SAMHD1.carrier',
+                                               data=data, cores=20, 
+                                               covariates=colnames(k)[-c(1,2)], 
+                                               additive.genotypes=F)
+
+# MAC < 6
+samhd1.carrier <- read.csv('~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_lt_6',
+                           col.names = c('id', 'SAMHD1.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(samhd1.carrier, by='id')
+results_samhd1.carrier_mac_lt6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='SAMHD1.carrier',
+                                             data=data, cores=20, 
+                                             covariates=colnames(k)[-c(1,2)], 
+                                             additive.genotypes=F)
+```
+
+### TWNK Carriers
+```{r twnk_analysis}
+# MAC >= 6
+twnk.carrier <- read.csv('~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_gteq_6',
+                         col.names = c('id', 'TWNK.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(twnk.carrier, by='id')
+results_twnk.carrier_mac_gteq6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='TWNK.carrier',
+                                             data=data, cores=15, 
+                                             covariates=colnames(k)[-c(1,2)], 
+                                             additive.genotypes=F)
+
+# MAC < 6
+twnk.carrier <- read.csv('~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_lt_6',
+                         col.names = c('id', 'TWNK.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(twnk.carrier, by='id')
+results_twnk.carrier_mac_lt6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='TWNK.carrier',
+                                           data=data, cores=15, 
+                                           covariates=colnames(k)[-c(1,2)], 
+                                           additive.genotypes=F)
+```
+
+### TFAM Carriers
+
+```{r tfam_analysis}
+# MAC >= 6
+tfam.carrier <- read.csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_gteq_6',
+                         col.names = c('id', 'TFAM.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(tfam.carrier, by='id')
+results_tfam.carrier_mac_gteq6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='TFAM.carrier',
+                                             data=data, cores=15, 
+                                             covariates=colnames(k)[-c(1,2)], 
+                                             additive.genotypes=F)
+
+# MAC < 6
+tfam.carrier <- read.csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_lt_6',
+                         col.names = c('id', 'TFAM.carrier')) %>% as_tibble()
+data <- i %>% inner_join(k, by='id') %>% inner_join(tfam.carrier, by='id')
+results_tfam.carrier_mac_lt6 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='TFAM.carrier',
+                                           data=data, cores=15, 
+                                           covariates=colnames(k)[-c(1,2)], 
+                                           additive.genotypes=F)
+```
+
+## Meta-Analyses
+
+### SAMHD1 Meta-Analysis
+
+```{r samhd1_meta}
+samhd1.mac_lt_6 <- getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_lt6.rds') %>% 
+  addPhecodeInfo() %>% as_tibble()
+samhd1.mac_gteq_6 <- getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_gteq6.rds') %>%
+  as_tibble()
+samhd1.mac_lt_6$study <- 'mac_lt6'
+samhd1.mac_gteq_6$study <- 'mac_gteq6'
+samhd1.rv.phewas_res <- rbind(samhd1.mac_lt_6, samhd1.mac_gteq_6)
+samhd1.rv.phewas_res$adjustment <- NA
+samhd1.rv.phewas_res <- phewasMeta(samhd1.rv.phewas_res, fixed = F, keep.both = T, cores=1)
+```
+
+### TWNK Meta-Analysis
+
+```{r twnk_meta}
+twnk.mac_lt_6 <- getobj('~/mito_rare-variant/resources/phewas_results_twnk_mac_lt6.rds') %>% 
+  addPhecodeInfo() %>% as_tibble()
+twnk.mac_gteq_6 <- getobj('~/mito_rare-variant/resources/phewas_results_twnk_mac_gteq6.rds') %>%
+  addPhecodeInfo() %>% as_tibble()
+twnk.mac_lt_6$study <- 'mac_lt6'
+twnk.mac_gteq_6$study <- 'mac_gteq6'
+twnk.rv.phewas_res <- rbind(twnk.mac_lt_6, twnk.mac_gteq_6)
+twnk.rv.phewas_res$adjustment <- NA
+twnk.rv.phewas_res <- phewasMeta(twnk.rv.phewas_res, fixed = F, keep.both = T, cores=1)
+```
+
+### TFAM Meta-Analysis
+
+```{r tfam_meta}
+tfam.mac_lt_6 <- getobj('~/mito_rare-variant/resources/phewas_results_tfam_mac_lt6.rds') %>% 
+  addPhecodeInfo() %>% as_tibble()
+tfam.mac_gteq_6 <- getobj('~/mito_rare-variant/resources/phewas_results_tfam_mac_gteq6.rds') %>%
+  addPhecodeInfo() %>% as_tibble()
+tfam.mac_lt_6$study <- 'mac_lt6'
+tfam.mac_gteq_6$study <- 'mac_gteq6'
+tfam.rv.phewas_res <- rbind(tfam.mac_lt_6, tfam.mac_gteq_6)
+tfam.rv.phewas_res$adjustment <- NA
+tfam.rv.phewas_res <- phewasMeta(tfam.rv.phewas_res, fixed = F, keep.both = T, cores=1)
+```
+
+## Visualization
+
+```{r visualization}
+# Example for SAMHD1
+phewasManhattan(samhd1.rv.phewas_res, annotate.phenotype.description = T, OR.direction=T, OR.size=T) + 
+  theme(legend.position = 'bottom')
+
+# Repeat for TWNK and TFAM
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

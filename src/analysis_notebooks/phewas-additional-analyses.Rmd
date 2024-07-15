@@ -1,0 +1,223 @@
+---
+title: "Additional PheWAS Analyses"
+author: "Vamsee Pillalamarri"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Additional PheWAS Analyses
+
+This notebook contains additional analyses for the PheWAS analysis for 
+for rare variants associated with mitochondrial DNA copy number.
+
+## Load Required Libraries
+
+```{r load_libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(readr)
+library(PheWAS)
+library(TopmedPipeline)
+library(ggplot2)
+library(gt)
+```
+
+Load PheWAS functions
+```{r}
+source('src/phewas_functions.R')
+```
+
+## UKB mtDNA-CN Metric PheWAS
+
+```{r ukb_mtdna_cn_phewas}
+i <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n502485.icd10_phecodes.rds')
+ukb.data <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n502485.ukb.data.rds')
+ukb.data <- ukb.data$ukb.data
+icd10_phecodes <- i
+
+data_m1 <- ukb.data %>% filter(in.white.British.ancestry.subset==1 & used.in.pca.calculation==1) %>% 
+  select(id, age, sex, arrayCN_PCA_m1, paste0('PC',1:40,separate=''), genotyping.array) %>% 
+  inner_join(icd10_phecodes, by='id')
+data_m2 <- ukb.data %>% filter(in.white.British.ancestry.subset==1 & used.in.pca.calculation==1) %>% 
+  select(id, age, sex, arrayCN_PCA_m2, paste0('PC',1:40,separate=''), genotyping.array) %>% 
+  inner_join(icd10_phecodes, by='id')
+data_m3 <- ukb.data %>% filter(in.white.British.ancestry.subset==1 & used.in.pca.calculation==1) %>% 
+  select(id, age, sex, arrayCN_PCA_m3, paste0('PC',1:40,separate=''), genotyping.array) %>% 
+  inner_join(icd10_phecodes, by='id')
+
+results_mtDNA_CN_m1 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='arrayCN_PCA_m1',
+                                  data=data_m1, cores=10, covariates=c('age','sex',
+                                                                       paste0('PC',1:40,separate=''),
+                                                                       'genotyping.array'),
+                                  additive.genotypes=F)
+
+results_mtDNA_CN_m2 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='arrayCN_PCA_m2',
+                                  data=data_m2, cores=15, covariates=c('age','sex',
+                                                                       paste0('PC',1:40,separate=''),
+                                                                       'genotyping.array'),
+                                  additive.genotypes=F)
+
+results_mtDNA_CN_m3 <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='arrayCN_PCA_m3',
+                                  data=data_m3, cores=10, covariates=c('age','sex',
+                                                                       paste0('PC',1:40,separate=''),
+                                                                       'genotyping.array'),
+                                  additive.genotypes=F)
+```
+
+## GWAS SNPs Analysis
+
+```{r gwas_snps_analysis}
+phewas_gwas.snps1 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results.gwas_snp_phewas1.unrel.rds')
+phewas_gwas.snps2 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results.gwas_snp_phewas2.unrel.rds')
+phewas_gwas.snps <- rbind(phewas_gwas.snps1, phewas_gwas.snps2) %>% as_tibble()
+
+phewas_gwas.snps %>% 
+  addPhecodeInfo() %>% 
+  arrange(p) %>% 
+  mutate(case.ctrl_ratio=(n_cases/n_controls)) %>%
+  filter(p <= (0.05 / 238908)) %>%
+  dplyr::select(phenotype, snp, beta, SE, OR, p, n_cases, n_controls, 
+                case.ctrl_ratio, description, group) %>% 
+  gt() %>% 
+  fmt_number(columns = 'case.ctrl_ratio', n_sigfig = 3) %>% 
+  fmt_scientific(columns='p', decimals = 2) %>% 
+  fmt_number(columns='OR', n_sigfig = 3)
+
+phewasManhattan(phewas_gwas.snps, OR.size=T, OR.direction=T, annotate.size=3) + 
+  theme(legend.position = 'none')
+```
+
+## MTDNA rv Carrier Analysis
+
+```{r mtdna_rv_carrier_analysis}
+# Load carrier data for SAMHD1, TWNK, and TFAM
+samhd1.carrier <- read.csv('~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_gteq_6',
+                           col.names = c('id', 'SAMHD1.carrier.mac_gteq6')) %>% 
+  inner_join(read.csv('~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_lt_6',
+                      col.names = c('id', 'SAMHD1.carrier.mac_lt6')), by='id') %>% 
+  mutate(SAMHD1.carrier.mac_all=ifelse(SAMHD1.carrier.mac_gteq6==1 | SAMHD1.carrier.mac_lt6==1, 1,0))
+
+twnk.carrier <- read.csv('~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_gteq_6',
+                         col.names = c('id', 'TWNK.carrier.mac_gteq6')) %>% 
+  inner_join(read.csv('~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_lt_6',
+                      col.names = c('id', 'TWNK.carrier.mac_lt6')), by='id') %>% 
+  mutate(TWNK.carrier.mac_all=ifelse(TWNK.carrier.mac_gteq6==1 | TWNK.carrier.mac_lt6==1, 1,0))
+
+tfam.carrier <- read.csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_gteq_6',
+                         col.names = c('id', 'TFAM.carrier.mac_gteq6')) %>% 
+  inner_join(read.csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_lt_6',
+                      col.names = c('id', 'TFAM.carrier.mac_lt6')), by='id') %>% 
+  mutate(TFAM.carrier.mac_all=ifelse(TFAM.carrier.mac_gteq6==1 | TFAM.carrier.mac_lt6==1, 1,0))
+
+mtDNA.rv.carrier <- samhd1.carrier %>% 
+  inner_join(twnk.carrier, by='id') %>% 
+  inner_join(tfam.carrier, by='id') %>%
+  mutate(mtDNA.rv.carrier.mac_gteq6=ifelse(SAMHD1.carrier.mac_gteq6==1 | TWNK.carrier.mac_gteq6==1 | TFAM.carrier.mac_gteq6==1, 1, 0)) %>%
+  inner_join(k, by=c('id'='sample.id'))
+
+# Run PheWAS for all MAC variants
+data <- mtDNA.rv.carrier %>%  
+  select(id, mtDNA.rv.carrier, age, sex, mtDNA_CN, paste0('PC',1:40,separate=''), wes.batch) %>% 
+  inner_join(icd10_phecodes, by='id')
+
+results_mtDNA_rv.carrier <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='mtDNA.rv.carrier',
+                                       data=data, cores=15, covariates=c('age','sex',
+                                                                         paste0('PC',1:40,separate=''),
+                                                                         'wes.batch'))
+
+# Run PheWAS for individual genes (MAC all)
+data <- mtDNA.rv.carrier %>%  
+  select(id, SAMHD1.carrier.mac_all, TWNK.carrier.mac_all, TFAM.carrier.mac_all, 
+         age, sex, paste0('PC',1:40,separate=''), wes.batch) %>% 
+  inner_join(icd10_phecodes, by='id')
+
+results_mtDNA_rv.carrier_SAMHD1 <- phewas_ext(phenotypes=colnames(icd10_phecodes)[-1], genotypes='SAMHD1.carrier.mac_all',
+                                              data=data, cores=15, covariates=c('age','sex',
+                                                                                paste0('PC',1:40,separate=''),
+                                                                                'wes.batch'))
+
+results_mtDNA_rv.carrier_TWNK <- phewas_ext(phenotypes=colnames(icd10_phecodes)[-1], genotypes='TWNK.carrier.mac_all',
+                                            data=data, cores=15, covariates=c('age','sex',
+                                                                              paste0('PC',1:40,separate=''),
+                                                                              'wes.batch'))
+
+results_mtDNA_rv.carrier_TFAM <- phewas_ext(phenotypes=colnames(icd10_phecodes)[-1], genotypes='TFAM.carrier.mac_all',
+                                            data=data, cores=15, covariates=c('age','sex',
+                                                                              paste0('PC',1:40,separate=''),
+                                                                              'wes.batch'))
+```
+
+## Meta-analysis of MAC >= 6 Variants
+
+```{r mac_gte_6_meta_analysis}
+samhd1.mac_gteq_6 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_gteq6.rds') %>%
+  as_tibble()
+twnk.mac_gteq_6 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_twnk_mac_gteq6.rds') %>%
+  addPhecodeInfo() %>% as_tibble()
+tfam.mac_gteq_6 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tfam_mac_gteq6.rds') %>%
+  addPhecodeInfo() %>% as_tibble()
+
+samhd1.mac_gteq_6$snp <- 'carrier'
+twnk.mac_gteq_6$snp <- 'carrier'
+tfam.mac_gteq_6$snp <- 'carrier'
+
+samhd1.mac_gteq_6$study <- 'samhd1'
+twnk.mac_gteq_6$study <- 'twnk'
+tfam.mac_gteq_6$study <- 'tfam'
+
+samhd1.mac_gteq_6$adjustment <- NA
+twnk.mac_gteq_6$adjustment <- NA
+tfam.mac_gteq_6$adjustment <- NA
+
+mtDNA.rv.carrier.meta <- rbind(samhd1.mac_gteq_6,
+                               twnk.mac_gteq_6,
+                               tfam.mac_gteq_6)
+mtDNA.rv.carrier.meta <- phewasMeta(mtDNA.rv.carrier.meta, fixed = F, 
+                                    keep.both = T, cores=1)
+
+mtDNA.rv.carrier.meta %>% addPhecodeInfo() %>% select(p, description, group) %>% 
+  arrange(p)
+
+phewasManhattan(mtDNA.rv.carrier.meta, annotate.phenotype.description = T, OR.direction=T, OR.size=T) +
+  theme(legend.position = 'bottom')
+```
+
+## LONP1 Testing
+
+```{r lonp1_testing}
+gwas_rs11085147_T <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='rs11085147_T',
+                                data=data2, cores=15, covariates=c('age','sex',
+                                                                   paste0('PC',1:40,separate=''),
+                                                                   'genotyping.array'))
+```
+
+## Testing SAMHD1, TWNK, TFAM for Unrelated Individuals
+
+```{r unrelated_testing}
+unrel <- read_tsv('~/mtrv/burden/genesis/gds/n176064.unrelated.plink.to_keep.IIDs', 
+                  col_names=c('id'))
+k <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n180256.keep_samples.AnnotatedDataFrame.RData')
+k <- as_tibble(k@data)
+k <- k %>% select('sample.id', 'wes.batch')
+i <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n180256.icd10_codes_phecodes.rds')
+i <- i$icd10_phecodes
+ukb.dat <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n502485.ukb.data.rds')
+
+# SAMHD1
+samhd1.carrier <- read.csv('~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_gteq_6',
+                           col.names = c('id', 'SAMHD1.carrier')) %>% as_tibble()
+data <- ukb.dat$ukb.data %>% 
+  inner_join(unrel, by='id') %>%
+  inner_join(i, by='id') %>% 
+  inner_join(k, by=c('id'='sample.id')) %>% 
+  inner_join(samhd1.carrier, by='id')
+
+samhd1.mac_gteq_6.unrel <- phewas_ext(phenotypes=colnames(i)[-1], genotypes='SAMHD1.carrier',
+                                      data=data, cores=1, covariates=c('age','sex',
+                                                                       paste0('PC',1:40,separate=''),
+                                                                       'wes.batch'))
+
+#

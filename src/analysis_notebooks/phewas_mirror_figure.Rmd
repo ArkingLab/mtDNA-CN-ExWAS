@@ -1,0 +1,160 @@
+---
+title: "Figures"
+output: html_notebook
+---
+
+PheWAS Figure
+
+# read in data
+```{r}
+require(dplyr)
+require(readr)
+require(forcats)
+require(PheWAS)
+phewas.pos <- read_tsv(
+  '~/mito_rare-variant/analyses/phewas/rv_phewas/phewas.corr_cutoff_genes.mac_gteq6_bonf_include_lt6.positive_betas.inFullExomesSetk.txt'
+) %>%
+  addPhecodeInfo() %>% select(
+    Variable = phecode,
+    beta,
+    SE,
+    chisq,
+    OR,
+    pvalue = p,
+    Group = group
+  ) %>% mutate(Group = as_factor(Group))
+
+phewas.neg <- read_tsv(
+  '~/mito_rare-variant/analyses/phewas/rv_phewas/phewas.corr_cutoff_genes.mac_gteq6_bonf_include_lt6.negative_betas.inFullExomesSetk.txt'
+) %>%
+  addPhecodeInfo() %>% select(
+    Variable = phecode,
+    beta,
+    SE,
+    chisq,
+    OR,
+    pvalue = p,
+    Group = group
+  ) %>% mutate(Group = as_factor(Group))
+
+# Add shape
+# phewas.pos$Shape <- rep(NA, nrow(phewas.pos))
+# phewas.neg$Shape <- rep(NA, nrow(phewas.neg))
+phewas.pos <- phewas.pos %>%
+  mutate(Shape = ifelse(
+    beta > 1 * sd(phewas.pos$beta),
+    'Increased Risk',
+    ifelse(beta < -1 * sd(phewas.pos$beta), 'Decreased Risk', '~Zero Effect')
+  ))
+phewas.neg <- phewas.neg %>%
+  mutate(Shape = ifelse(
+    beta > 1 * sd(phewas.neg$beta),
+    'Increased Risk',
+    ifelse(beta < -1 * sd(phewas.neg$beta), 'Decreased Risk', '~Zero Effect')
+  ))
+phewas.pos <- phewas.pos %>% mutate(Shape = fct_relevel(Shape, "~Zero Effect", after =
+                                                          2))
+phewas.neg <- phewas.neg %>% mutate(Shape = fct_relevel(Shape, "~Zero Effect", after =
+                                                          2))
+
+# Anon factor levels
+phewas.pos <- phewas.pos %>% mutate(
+  Group = fct_recode(
+    Group,
+    Circ = "circulatory system",
+    Geni = "genitourinary",
+    Neop = "neoplasms",
+    Dige = "digestive",
+    Neur = "neurological",
+    Resp = "respiratory",
+    Heme = "hematopoietic",
+    Ment = "mental disorders",
+    Musc = "musculoskeletal",
+    Other = "symptoms",
+    Endr = "endocrine/metabolic",
+    Derm = "dermatologic",
+    Cong = "congenital anomalies",
+    Infe = "infectious diseases",
+    Sens = "sense organs",
+    Other = "pregnancy complications",
+    Other = "injuries & poisonings"
+  )
+)
+phewas.neg <- phewas.neg %>% mutate(
+  Group = fct_recode(
+    Group,
+    Circ = "circulatory system",
+    Geni = "genitourinary",
+    Neop = "neoplasms",
+    Dige = "digestive",
+    Neur = "neurological",
+    Resp = "respiratory",
+    Heme = "hematopoietic",
+    Ment = "mental disorders",
+    Musc = "musculoskeletal",
+    Other = "symptoms",
+    Endr = "endocrine/metabolic",
+    Derm = "dermatologic",
+    Cong = "congenital anomalies",
+    Infe = "infectious diseases",
+    Sens = "sense organs",
+    Other = "pregnancy complications",
+    Other = "injuries & poisonings"
+  )
+)
+
+# add p-values for '200'
+phewas.pos$pvalue[phewas.pos$Variable == '200'] <- 1.5e-08 # chisq.test(rbind(c(227,16539),c(1382, 355763)))$p.value
+phewas.pos$pvalue[phewas.pos$Variable == '200.1'] <-  1.5e-09 # chisq.test(rbind(c(119,16297),c(370, 350606)))$p.value
+phewas.pos$pvalue[phewas.pos$Variable == '289.8'] <-  1.5e-08 # chisq.test(rbind(c(77,16268),c(440, 349801)))$p.value
+# mutate(phewas.pos, Group = fct_recode(Group, Circ="circulatory system", Gen="genitourinary" ))
+
+# Add Color column (name the levels by group)
+phewas.pos$Color = as_factor(addPhecodeInfo(phewas.pos)$group)
+phewas.neg$Color = as_factor(addPhecodeInfo(phewas.neg)$group)
+
+# Combine colors for 'symptoms','preg. complications', and 'injr. & poisonings'
+# phewas.pos <- phewas.pos %>% mutate(Color=fct_recode(Color,
+#                                                      Other='symptoms',
+#                                                      Other='pregnancy complications',
+#                                                      Other='injuries & poisonings'))
+# phewas.neg <- phewas.neg %>% mutate(Color=fct_recode(Color,
+#                                                      Other='symptoms',
+#                                                      Other='pregnancy complications',
+#                                                      Other='injuries & poisonings'))
+
+# relevel levels
+phewas.pos$Group <- fct_relevel(phewas.pos$Group, "Other", after = 14)
+phewas.pos$Color <- fct_relevel(phewas.pos$Color, "symptoms", after = 15)
+
+# Expand phecodes to descriptions
+phewas.pos <- phewas.pos %>% mutate(Variable = addPhecodeInfo(phewas.pos)$description)
+phewas.neg <- phewas.neg %>% mutate(Variable = addPhecodeInfo(phewas.neg)$description)
+
+```
+
+# create phewas mirror plot
+```{r}
+require(hudson)
+emirror(
+  top = phewas.pos,
+  bottom = phewas.neg,
+  toptitle = "Rare Variants Increasing mtDNA-CN",
+  bottomtitle = "Rare Variants Decreasing mtDNA-CN",
+  background = 'white',
+  #'variegated',
+  grpblocks = T,
+  # hgt=8,
+  # wi=15,
+  tline = 0.05 / (2 * 1530),
+  bline = 0.05 / (2 * 1530),
+  # annotate_var = c('200','200.1','289.8'),
+  annotate_p = (0.05 / (2 * 1530)),
+  file = '~/phewas.pos.neg.mirror.png'
+)
+```
+
+
+
+
+

@@ -1,0 +1,71 @@
+---
+title: "P-value threshold"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE}
+library(Hmisc)
+library(dplyr)
+library(corrplot)
+
+# compiled gene-based results
+res <- readRDS('~/mito_rare-variant/analyses/burden/run3/all_res.rds')
+res <- res %>% filter(!is.na(pval_SMMAT) & err!=1 & cfreq >= 1e-04) %>%
+  arrange(pval_SMMAT)
+```
+
+```{r}
+# get shared genes across variant sets
+# genes <- res %>% group_by(varset, maf) %>% group_map(.f = function(x,...) return(x$gene))
+# genes.shared <- Reduce(intersect, genes)
+
+genes <- res %>% group_by(set) %>% group_map(.f = function(x,...) return(x$gene))
+genes.shared <- Reduce(intersect, genes)
+
+get.pval_SMMAT <- function(x, ...){
+    t <- x %>% inner_join(tibble(genes.shared), by=c('gene'='genes.shared')) %>% distinct(gene, .keep_all = T)
+    return(t$pval_SMMAT)  
+}
+get.pval_burden <- function(x, ...){
+    t <- x %>% inner_join(tibble(genes.shared), by=c('gene'='genes.shared')) %>% distinct(gene, .keep_all = T)
+    return(t$pval_burden)  
+}
+
+# get pvals per set for shared genes
+pvals_SMMAT <- res %>% group_by(set) %>%
+  group_map(.f = get.pval_SMMAT)
+pvals_burden <- res %>% group_by(set) %>%
+  group_map(.f = get.pval_burden)
+
+pvals_SMMAT <- sapply(pvals_SMMAT, function(x) return(log10(x)), simplify = T)
+pvals_burden <- sapply(pvals_burden, function(x) return(log10(x)), simplify = T)
+
+out_SMMAT <- rcorr(as.matrix(pvals_SMMAT))
+wb <- c("white", "black")
+corrplot(out_SMMAT$r, type = "lower", 
+         method='shade',
+         order = "hclust",
+         hclust.method = 'ward.D2',
+         tl.col = "black", 
+         tl.srt = 45,
+         tl.cex = 0.8,
+         cl.lim=c(0.9,1))#,
+         # col='red')
+         # col=col2(500))
+
+out_burden <- rcorr(as.matrix(pvals_burden))
+wb <- c("white", "black")
+corrplot(out_burden$r, type = "lower", 
+         method='shade',
+         order = "hclust",
+         # hclust.method = 'ward.D2',
+         tl.col = "black", 
+         tl.srt = 45,
+         tl.cex = 0.8,
+         cl.lim=c(0.3,1))#,
+         # col='red')
+         # col=col2(500))
+
+``
+
+

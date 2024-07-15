@@ -1,0 +1,500 @@
+---
+title: "Phenotype analysis for mtDNA-CN RV Genes"
+output: html_notebook
+---
+
+Phenotpe analysis for rare variants in genome-wide significant genes 
+associated with mtDNA-CN.
+
+```{r setup}
+library(dplyr)
+library(readr)
+library(stringr)
+library(splines)
+library(ggeffects)
+
+# Load genotype / phenotype data
+data <- readRDS("~/mito_rare-variant/analyses/burden/run5/ukbPheno_05202021.rds")
+```
+
+```{r}
+# SAMHD1
+samhd1 <- read_csv('~/mito_rare-variant/analyses/burden/run5/SAMHD1.carriers.mac_gteq_6')
+samhd1.rare <- read_csv('~/mito_rare-variant/analyses/burden/run5/SAMHD1.carriers.mac_lt_6')
+colnames(samhd1) <- c('eid', 'SAMHD1.carrier.MAC_gteq6')
+colnames(samhd1.rare) <- c('eid', 'SAMHD1.carrier.MAC_lt6')
+
+twnk <- read_csv("~/mito_rare-variant/analyses/burden/run5/TWNK.carriers.mac_gteq_6")
+twnk.rare <- read_csv("~/mito_rare-variant/analyses/burden/run5/TWNK.carriers.mac_lt_6")
+colnames(twnk) <- c('eid', 'TWNK.carrier.MAC_gteq6')
+colnames(twnk.rare) <- c('eid', 'TWNK.carrier.MAC_lt6')
+
+tfam <- read_csv("~/mito_rare-variant/analyses/burden/run5/TFAM.carriers.mac_gteq_6")
+tfam.rare <- read_csv("~/mito_rare-variant/analyses/burden/run5/TFAM.carriers.mac_lt_6")
+colnames(tfam) <- c('eid', 'TFAM.carrier.MAC_gteq6')
+colnames(tfam.rare) <- c('eid', 'TFAM.carrier.MAC_lt6')
+
+rv <- samhd1 %>%
+  inner_join(samhd1.rare, by = 'eid') %>%
+  inner_join(twnk, by = 'eid') %>%
+  inner_join(twnk.rare, by = 'eid') %>%
+  inner_join(tfam, by = 'eid') %>%
+  inner_join(tfam.rare, by = 'eid')
+rv$SAMHD1.carrier.MAC_gteq6 <- as.factor(rv$SAMHD1.carrier.MAC_gteq6)
+rv$TWNK.carrier.MAC_gteq6 <- as.factor(rv$TWNK.carrier.MAC_gteq6)
+rv$TFAM.carrier.MAC_gteq6 <- as.factor(rv$TFAM.carrier.MAC_gteq6)
+rv$SAMHD1.carrier.MAC_lt6 <- as.factor(rv$SAMHD1.carrier.MAC_lt6)
+rv$TWNK.carrier.MAC_lt6 <- as.factor(rv$TWNK.carrier.MAC_lt6)
+rv$TFAM.carrier.MAC_lt6 <- as.factor(rv$TFAM.carrier.MAC_lt6)
+
+data2 <- left_join(rv, data, by = c('eid' = 'IID'))
+# data2 %>% count(SAMHD1.carrier.MAC_gteq6, TWNK.carrier.MAC_gteq6, TFAM.carrier.MAC_gteq6)
+# note: 3720039 has both samhd1 and tfam mutations.. interesting
+# data2 %>% count(SAMHD1.carrier.MAC_lt6, TWNK.carrier.MAC_lt6, TFAM.carrier.MAC_lt6)
+# note: 3 people have samhd1 mac < 6 and twnk mac < 6 mutations.. interesting
+
+clean <- data2 %>% filter(used.in.pca.calculation == 1,
+                          in.white.British.ancestry.subset == 1)
+rm(data)
+rm(data2)
+```
+
+# SAMHD1 variants and Telomere Length (LTL)
+```{r}
+fit.ltl <- lm(LTL~ns(age, df=2)+sex+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean)
+summary(fit.ltl)
+
+# gtsummary
+ids <- names(sort(summary(fit.ltl)$coef[,4][2:nrow(summary(fit.ltl)$coef)]))
+gt1.SAMHD1.ltl <- 
+  tbl_regression(fit.ltl, pvalue_fun = function(x) prettyNum(x, digits=2)) %>%
+  bold_p(t=(0.05 / (length(coef(fit.ltl))-1))) %>%
+  add_glance_source_note() %>%
+  # add_q() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length") #%>%
+  # modify_header(update = list(label ~ "**Variant**"))
+gt1.SAMHD1.ltl
+
+#plot(ggeffect(model = fit.ltl, terms = c('SAMHD1.carrier.MAC_gteq6','SAMHD1.carrier.MAC_lt6')))
+```
+
+# SAMHD1 variants and mortality
+```{r SAMHD1}
+f1 <- coxph(
+  Surv(ttDead, Dead) ~ ns(age, df = 2) + sex + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = clean
+)
+f1.male <- coxph(
+  Surv(ttDead, Dead) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = clean %>% filter(sex == "Male")
+)
+f1.female <- coxph(
+  Surv(ttDead, Dead) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = clean %>% filter(sex == "Female")
+)
+
+f1.coxph <-
+  tbl_regression(
+    f1,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare")
+f1.coxph
+
+f1.female.coxph <-
+  tbl_regression(
+    f1.female,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length")
+f1.female.coxph
+
+f1.male.coxph <-
+  tbl_regression(
+    f1.male,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length")
+f1.male.coxph
+
+f1.coxph
+f1.male.coxph
+f1.female.coxph
+# summary(glm(CVD~age+sex+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,family="binomial",data=clean))
+# summary(glm(CVD~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,family="binomial",data=clean %>% filter(sex=="Male")))
+# summary(glm(CVD~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,family="binomial",data=clean %>% filter(sex=="Female")))
+# 
+# summary(coxph(Surv(ttCVD,incCVD)~age+sex+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean))
+# summary(coxph(Surv(ttCVD,incCVD)~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean %>% filter(sex=="Male")))
+# summary(coxph(Surv(ttCVD,incCVD)~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean %>% filter(sex=="Female")))
+# 
+# summary(coxph(Surv(ttMI,incMI)~age+sex+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean))
+# summary(coxph(Surv(ttMI,incMI)~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean %>% filter(sex=="Male")))
+# summary(coxph(Surv(ttMI,incMI)~age+SAMHD1.carrier.MAC_lt6+SAMHD1.carrier.MAC_gteq6,data=clean %>% filter(sex=="Female")))
+```
+
+```{r TWNK}
+# TWNK
+twnk <- read_csv(
+  "C:/Users/darking/OneDrive - Johns Hopkins/darking/UKBiobank/data/TWNK.carriers.mac_gteq_6"
+)
+twnk.rare <- read_csv(
+  "C:/Users/darking/OneDrive - Johns Hopkins/darking/UKBiobank/data/TWNK.carriers.mac_lt_6"
+)
+data2 <- left_join(twnk, data, by = c("eid" = "IID"))
+data2 <- left_join(twnk.rare, data2, by = c("eid" = "eid"))
+clean <- data2 %>% filter(used.in.pca.calculation == 1,
+                          in.white.British.ancestry.subset == 1)
+clean$TWNK.carrier.x <- as.factor(clean$TWNK.carrier.x)
+clean$TWNK.carrier.y <- as.factor(clean$TWNK.carrier.y)
+summary(lm(arrayCN_PCA_m2 ~ age + sex + TWNK.carrier.x + TWNK.carrier.y, data =
+             clean))
+summary(lm(LTL ~ age + sex + TWNK.carrier.x + TWNK.carrier.y, data = clean))
+
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + sex + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean
+))
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean %>% filter(sex == "Male")
+))
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean %>% filter(sex == "Female")
+))
+
+summary(glm(
+  CVD ~ age + sex + TWNK.carrier.x + TWNK.carrier.y,
+  family = "binomial",
+  data = clean
+))
+summary(
+  glm(
+    CVD ~ age + TWNK.carrier.x + TWNK.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Male")
+  )
+)
+summary(
+  glm(
+    CVD ~ age + TWNK.carrier.x + TWNK.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Female")
+  )
+)
+
+summary(glm(
+  MI ~ age + sex + TWNK.carrier.x + TWNK.carrier.y,
+  family = "binomial",
+  data = clean
+))
+summary(
+  glm(
+    MI ~ age + TWNK.carrier.x + TWNK.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Male")
+  )
+)
+summary(
+  glm(
+    MI ~ age + TWNK.carrier.x + TWNK.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Female")
+  )
+)
+
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + sex + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean
+))
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean %>% filter(sex == "Male")
+))
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + TWNK.carrier.x + TWNK.carrier.y,
+  data = clean %>% filter(sex == "Female")
+))
+#summary(coxph(Surv(ttCVD,incCVD)~TWNK.carrier.x+sex*TWNK.carrier.y+age, data=clean))
+
+summary(coxph(
+  Surv(ttMI, incMI) ~ TWNK.carrier.x + TWNK.carrier.y + age + sex,
+  data = clean
+))
+summary(coxph(
+  Surv(ttMI, incMI) ~ TWNK.carrier.x + TWNK.carrier.y + age,
+  data = clean %>% filter(sex == 'Male')
+))
+summary(coxph(
+  Surv(ttMI, incMI) ~ TWNK.carrier.x + TWNK.carrier.y + age,
+  data = clean %>% filter(sex == 'Female')
+))
+#summary(coxph(Surv(ttMI,incMI)~TWNK.carrier.x+sex*TWNK.carrier.y+age, data=clean))
+clean %>% filter(TWNK.carrier.y == 1 &
+                   MI == 1) %>% select(eid,
+                                       arrayCN_PCA_m2,
+                                       MI,
+                                       CVD,
+                                       Asthma,
+                                       LDL,
+                                       bpmed,
+                                       Aspirin,
+                                       age,
+                                       sex,
+                                       BMI)
+```
+
+```{r TFAM}
+# TFAM
+tfam <- read_csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_gteq_6')
+tfam.rare <- read_csv('~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_lt_6')
+data2 <- left_join(tfam, data, by = c("eid" = "IID"))
+data2 <- left_join(tfam.rare, data2, by = c("eid" = "eid"))
+clean <- data2 %>% filter(used.in.pca.calculation == 1,
+                          in.white.British.ancestry.subset == 1)
+summary(lm(arrayCN_PCA_m2 ~ age + sex + TFAM.carrier.x + TFAM.carrier.y, data =
+             clean))
+summary(lm(LTL ~ age + sex + TFAM.carrier.x + TFAM.carrier.y, data = clean))
+
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + sex + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean
+))
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Male")
+))
+summary(coxph(
+  Surv(ttDead, Dead) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Female")
+))
+
+summary(glm(
+  CVD ~ age + sex + TFAM.carrier.x + TFAM.carrier.y,
+  family = "binomial",
+  data = clean
+))
+summary(
+  glm(
+    CVD ~ age + TFAM.carrier.x + TFAM.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Male")
+  )
+)
+summary(
+  glm(
+    CVD ~ age + TFAM.carrier.x + TFAM.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Female")
+  )
+)
+
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + sex + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean
+))
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Male")
+))
+summary(coxph(
+  Surv(ttCVD, incCVD) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Female")
+))
+
+summary(glm(
+  MI ~ age + sex + TFAM.carrier.x + TFAM.carrier.y,
+  family = "binomial",
+  data = clean
+))
+summary(
+  glm(
+    MI ~ age + TFAM.carrier.x + TFAM.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Male")
+  )
+)
+summary(
+  glm(
+    MI ~ age + TFAM.carrier.x + TFAM.carrier.y,
+    family = "binomial",
+    data = clean %>% filter(sex == "Female")
+  )
+)
+
+summary(coxph(
+  Surv(ttMI, incMI) ~ age + sex + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean
+))
+summary(coxph(
+  Surv(ttMI, incMI) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Male")
+))
+summary(coxph(
+  Surv(ttMI, incMI) ~ age + TFAM.carrier.x + TFAM.carrier.y,
+  data = clean %>% filter(sex == "Female")
+))
+
+```
+
+
+# SAMHD1 variants and cancer analysis
+```{r}
+# Load Di's ukb curated cancer phenotypes
+ukb_cancer.all <- as_tibble(
+  TopmedPipeline::getobj(
+    '~/mito_rare-variant/analyses/phewas/ukb_cancer_di_zhao/cancer_data/ukb_mtdna_cancer_exclude_leukemia.rds'
+  )
+)
+ukb_cancer.all$id <- as.numeric(ukb_cancer.all$id)
+ltl <- data %>% select(IID, LTL, arrayCN_PCA_m2)
+ukb_cancer.all <- ukb_cancer.all %>% inner_join(ltl, by = c('id' = 'IID'))
+ukb_cancer.all$LTL_split <-
+  with(ukb_cancer.all, cut(LTL, breaks = quantile(
+    LTL,
+    probs = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1),
+    na.rm = T
+  ))) # Tertles of LTL
+
+ukb_cancer <- TopmedPipeline::getobj(
+  '~/mito_rare-variant/analyses/phewas/ukb_cancer_di_zhao/cancer_data/ukb_mtdna_cancer_exclude_leukemia.rds'
+)
+ukb_cancer$id <- as.numeric(ukb_cancer$id)
+
+# Attach SAMHD1 carrier data
+ukb_cancer <- ukb_cancer %>% inner_join(samhd1, by = c('id' = 'eid')) %>% inner_join(samhd1.rare, by =
+                                                                                       c('id' = 'eid')) %>% as_tibble()
+ukb_cancer$SAMHD1.carrier.MAC_gteq6 <- as.factor(ukb_cancer$SAMHD1.carrier.MAC_gteq6)
+ukb_cancer$SAMHD1.carrier.MAC_lt6 <- as.factor(ukb_cancer$SAMHD1.carrier.MAC_lt6)
+
+# Dummy variable for any MAC >=6 mtDNA carrier
+ukb_cancer <- ukb_cancer %>%
+  mutate(
+    mtDNA.MAC_gteq6.carrier = ifelse(
+      SAMHD1.carrier.MAC_gteq6 == 1 |
+        TWNK.carrier.MAC_gteq6 == 1 |
+        TFAM.carrier.MAC_gteq6 == 1,
+      1,
+      0
+    )
+  )
+
+ukb_cancer <- ukb_cancer %>%
+  mutate(
+    mtDNA.MAC_lt6.carrier = ifelse(
+      SAMHD1.carrier.MAC_lt6 == 1 |
+        TWNK.carrier.MAC_lt6 == 1 |
+        TFAM.carrier.MAC_lt6 == 1,
+      1,
+      0
+    )
+  )
+
+ukb_cancer <- ukb_cancer %>%
+  mutate(
+    mtDNA.carrier = ifelse(
+      SAMHD1.carrier.MAC_gteq6 == 1 |
+        TWNK.carrier.MAC_gteq6 == 1 |
+        TFAM.carrier.MAC_gteq6 == 1 |
+        SAMHD1.carrier.MAC_lt6 == 1 |
+        TWNK.carrier.MAC_lt6 == 1 |
+        TFAM.carrier.MAC_lt6 == 1,
+      1,
+      0
+    )
+  )
+```
+
+SAMHD1 and cancer risk
+```{r}
+death.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + sex + SAMHD1.carrier.MAC_lt6 +
+    SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer
+)
+death.female.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer %>% filter(sex == 'women')
+)
+death.male.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer %>% filter(sex == 'men')
+)
+
+table_death.coxph <-
+  tbl_regression(
+    death.coxph,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length")
+table_death.coxph
+
+table_death.female.coxph <-
+  tbl_regression(
+    death.female.coxph,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length")
+table_death.female.coxph
+
+table_death.male.coxph <-
+  tbl_regression(
+    death.male.coxph,
+    pvalue_fun = function(x)
+      prettyNum(x, digits = 2),
+    exponentiate = T
+  ) %>%
+  add_glance_source_note() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  add_nevent(location = 'level')
+# modify_caption("Rare variants in **_SAMHD1_** Associated with Leukocyte Telomere Length")
+table_death.male.coxph
+
+
+```
+
+SAMHD1 and cancer risk
+```{r}
+death.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + sex + SAMHD1.carrier.MAC_lt6 +
+    SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer
+)
+death.female.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer %>% filter(sex == 'women')
+)
+death.male.coxph <- coxph(
+  Surv(ttdeath, death) ~ ns(age, df = 2) + SAMHD1.carrier.MAC_lt6 + SAMHD1.carrier.MAC_gteq6,
+  data = ukb_cancer %>% filter(sex == 'men')
+)
+```
+
+

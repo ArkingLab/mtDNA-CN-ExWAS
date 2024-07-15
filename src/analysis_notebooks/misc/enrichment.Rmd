@@ -1,0 +1,390 @@
+---
+title: "Enrichment Analysis"
+output: html_notebook
+---
+
+Enrichment analysis using various gene sets.
+
+- MitoCarta sets
+- Common variant loci identified in the GWAS paper
+- MsigDb gene-sets
+- OMIM Phenotypic Series (# TODO)
+
+# Functions that test enrichment
+```{r}
+require(ggplot2)
+require(hrbrthemes)
+require(ggrepel)
+
+# Tests mean t-vaules between in set and out set of genes
+test.enrich <- function(gene.set, res){
+  require(dplyr)
+  require(stringr)
+  require(gCMAP)
+  
+  # gene.sets = data.frame(id, genes)
+  # where `id` is name of gene set
+  # `genes` is list of genes that are comma separated
+  
+  `%notin%` <- Negate(`%in%`)
+    
+  enrich.pval <- data.frame(matrix(nrow = nrow(gene.set), ncol = 5))
+  
+  for(i in 1:nrow(gene.set)){
+    message('gene set: ', gene.set$id[i])
+    
+    # genes <- str_split(gene.set$genes[i], ', ', simplify = T)[[1]]
+    genes <- str_split(str_remove_all(gene.set$genes[i], ' '), ',', simplify = T)
+    # in.stat <- res %>% filter(gene %in% genes) %>% dplyr::select(gene, pval_SMMAT)
+    # out.stat <- res %>% filter(gene %notin% genes) %>% dplyr::select(pval_SMMAT)
+    # out.stat$z.smmat <- gCMAP::zScores(out.stat$pval_SMMAT)
+
+    in.stat <- res %>% filter(gene %in% genes) %>% dplyr::select(z.smmat)
+    out.stat <- res %>% filter(gene %notin% genes) %>% dplyr::select(z.smmat)
+    # out.stat$z.smmat <- gCMAP::zScores(out.stat$pval_SMMAT)
+    
+    if(nrow(in.stat) > 1){
+      # in.stat$z.smmat <- gCMAP::zScores(in.stat$pval_SMMAT)
+      # if(in.stat$gene %in% c('SAMHD1')) {
+      #   in.stat$z.smmat[which(in.stat$gene == 'SAMHD1')] <- 8.47
+      #   message('SAMHD1') }
+      # if(in.stat$gene %in% c('SAMHD1')) { message('SAMHD1')}
+      test <- t.test(abs(in.stat$z.smmat), abs(out.stat$z.smmat), var.equal=T)
+      enrich.pval[i,] <- c(nrow(in.stat), nrow(out.stat), test$estimate, test$p.value)
+    } else {
+      enrich.pval[i,] <- rep(NA, 5)
+      # enrich.pval[i,] <- c(0, nrow(out.stat), )
+    }
+  }
+  rownames(enrich.pval) <- gene.set$id
+  colnames(enrich.pval) <- c('n.in','n.out','est.in','est.out','pval')
+  return(as_tibble(enrich.pval, rownames='id'))
+}
+
+test.enrich_single <- function(gene.set, res, outliers=c('TWNK','TFAM','JAK2','SAMHD1')){
+  `%notin%` <- Negate(`%in%`)
+  enrich.pval <- data.frame(matrix(nrow = 1, ncol = 7))
+  
+  genes <- str_split(str_remove_all(gene.set$genes[1], ' '), ',', simplify = T)
+    
+  in.stat1 <- res %>% filter(gene %in% genes) %>% dplyr::select(z.smmat)
+  if(nrow(in.stat1)>0){
+      in.stat2 <- res %>% filter(gene %in% genes) %>% filter(gene %notin% outliers) %>% dplyr::select(z.smmat) # remove outliers
+      out.stat <- res %>% filter(gene %notin% genes) %>% dplyr::select(z.smmat)
+     
+      # message('test with outliers:')
+      test1 <- t.test(abs(in.stat1$z.smmat), abs(out.stat$z.smmat), var.equal=T)
+      # print(test1)
+      # message('test without outliers:')
+      test2 <- t.test(abs(in.stat2$z.smmat), abs(out.stat$z.smmat), var.equal=T)
+      # print(test2)
+      enrich.pval[1,] <- c(nrow(in.stat1), nrow(out.stat), test1$estimate, test1$p.value, test2$estimate[1], test2$p.value)
+    }
+  #else {
+    # rownames(enrich.pval) <- gene.set$id
+    # enrich.pval <- bind_cols(as_tibble(enrich.pval, rownames='id'), outliers=NA)
+    # colnames(enrich.pval) <- c('n.in','n.out','est.in','est.out','test.pval','est.in_no_outliers','test.pval_no_outliers','outliers')
+  # }
+  
+    rownames(enrich.pval) <- gene.set$id
+    colnames(enrich.pval) <- c('n.in','n.out','est.in','est.out','test.pval','est.in_no_outliers','test.pval_no_outliers')
+    enrich.pval <- bind_cols(as_tibble(enrich.pval, rownames='id'), outliers=paste0(outliers[outliers %in% genes],collapse=','))
+
+  return(enrich.pval)
+}
+```
+
+# Read gene sets / process to format for test.enrich()
+```{r}
+msig <- readLines('~/mito_rare-variant/analyses/burden/enrichment/t.test_method/msigdb.v7.4.symbols.gmt.txt')
+msig_ <- tibble(id=rep(NA, length(msig)), genes=rep(NA, length(msig)))
+for(i in 1:length(msig)){
+  m <- stringr::str_split(msig[i], pattern='\t', simplify = T)
+  msig_$id[i] <- m[1]
+  msig_$genes[i] <- paste0(m[3:length(m)], collapse=',')
+}
+
+disgenenet <- readLines('/Users/vkp/projects/mito_rare-variant/analyses/burden/enrichment/t.test_method/disgenet.curated.v7.symbols.gmt')
+disgenenet_ <- tibble(id=rep(NA, length(disgenenet)), genes=rep(NA, length(disgenenet)))
+for(i in 1:length(disgenenet)){
+  m <- stringr::str_split(disgenenet[i], pattern='\t', simplify = T)
+  disgenenet_$id[i] <- m[2]
+  disgenenet_$genes[i] <- paste0(m[3:length(m)], collapse=',')
+}
+
+# MitoCarta 3.0 Pathways
+mito.carta <- read_tsv('/Users/vkp/projects/mito_rare-variant/analyses/burden/enrichment/t.test_method/Human_MitoPathways3.0.txt', col_names=T)
+mito.carta <- mito.carta %>% dplyr::select(id=MitoPathway, genes=Genes)
+
+# Common variant GWAS genes (Longchamps/Yang 2021)
+gwas_genes_autosomes <- readLines('~/mito_rare-variant/resources/gene_lists/gwas_genes.txt')
+gwas_genes_xchr <- c('MIR1587','FAAH2','STARD8','SLC25A5')
+gwas_genes <- c(gwas_genes_autosomes, gwas_genes_xchr) # n=133
+
+```
+
+# OMIM Phenotypic Series
+```{r}
+require(romim)
+require(dplyr)
+require(stringr)
+set_key('QL4awbWXRxSCKKWsm0aH8g') # OMIM API key
+
+get.gene2 <- function(my_xml){
+  return(xmlSApply(getNodeSet(my_xml, '//geneSymbols'), xmlValue))
+}
+
+# TODO
+if(FALSE){
+omim <- read_csv('~/mito_rare-variant/resources/gene_lists/OMIM-Phenotypic-Series-Titles-all.csv')
+omim_ <- list()
+for(i in 1:268){
+  # message(omim$`Phenotypic Series Title`[i])
+  pseries <- romim::phenotypic_series(omim$`Phenotypic Series number`[i])
+  pseries_omim <- sapply(as.list(pseries), get_omim, geneMap=T)
+  pseries_genes <- sapply(pseries_omim, get.gene2)
+  omim_[[i]] <-
+    tibble(
+      id = omim$`Phenotypic Series Title`[i],
+      genes = paste0(unique(
+        str_split(str_remove_all(
+          paste0(pseries_genes, collapse = ',', sep = ''), ' '
+        ), ',', simplify = T)
+      ), sep = '',  collapse = ',')
+    )
+  message(i,':',paste(omim_[i]))
+}
+
+omim_tbl <- bind_rows(omim_)
+saveRDS(object = omim_tbl, file='~/mito_rare-variant/resources/gene_lists/omim_tbl.rds')
+}
+
+# omim_tbl <- TopmedPipeline::getobj('~/mito_rare-variant/resources/gene_lists/omim_tbl.rds')
+omim_tbl.enrich <- list()
+for(i in 1:nrow(omim_tbl)){
+  message(i)
+  omim_tbl.enrich[[i]] <- test.enrich_single(omim_tbl[i,], res)
+}
+omim_tbl.enrich <- bind_rows(omim_tbl.enrich)
+omim_tbl.enrich %>% arrange(test.pval)
+```
+
+# Read in aggregate testing results
+```{r}
+res.files <- list.files(path = '~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high_CADD18/', 
+                        pattern = 'rv_assoc.aggr.nonsyn.impact_mod_high_CADD18.SMMAT.AF.max.0.001.chr[0-9+]', full.names = T)
+res <- bind_rows(lapply(res.files, read_tsv, show_col_types = FALSE)) %>% 
+  filter(n.site !=0) %>% 
+  filter(!is.na(pval_SMMAT)) %>% 
+  filter(err==0) %>% 
+  filter(cfreq >= 0.0001)
+# 18966 genes pass filters
+
+# remove TLDC2 (it's a FP)
+res <- res %>% filter(gene != 'TLDC2')
+
+# Add z-scores converted from p-values
+res$z.smmat <- gCMAP::zScores(res$pval_SMMAT)
+```
+
+```{r}
+# Plot z.smmat distribution
+g <- res %>% 
+  ggplot(aes(x = z.smmat)) + 
+  geom_histogram(bins = 100, color='black', fill='black') + 
+  geom_rug() + 
+  theme_ipsum_rc() +
+  labs(title='Distribution of SMMAT Z-scores', subtitle = 'For variant set: Nonsynonymous CADD >= 18, MAF <= 0.001') +
+  geom_label_repel(data=subset(res, z.smmat >=5), 
+                   aes(x=z.smmat, y=100, label=gene), 
+                   size=2.5,
+                   point.padding = NA) +
+  ylab('') +
+  xlab('Z-score')
+g
+if(FALSE) {
+  ggsave(
+    plot = g,
+    filename = '~/mito_rare-variant/analyses/burden/enrichment/t.test_method/nonsyn.imapct_mod_high.cad18_0.001.z.smmat_hist.jpg',
+    device = 'jpeg',
+    dpi = 300,
+    width = 7,
+    height = 5
+  )
+}
+g
+
+
+# down weight SAMDH1
+res$z.smmat[which(res$gene=='SAMHD1')] <- 8.84
+
+```
+
+# Mito Carta pathway enrichment analysis
+```{r}
+require(gt)
+require(gtExtras)
+mcarta.enrich <- test.enrich(gene.set=mito.carta, res=res)
+mcarta.enrich$qvalue <- qvalue::qvalue(mcarta.enrich$pval)$qvalues
+mcarta.enrich %>% filter(!is.na(pval)) %>% 
+  # filter(pval < (0.05 / nrow(mcarta.enrich %>% filter(!is.na(pval))))) %>% 
+  arrange(pval) %>% 
+  gt() %>% 
+  tab_header(title='Enrichment in MitoCarta Pathways') %>% 
+  gt_theme_nytimes()
+  
+```
+
+# Msig enrichment
+```{r}
+msig_.enrich <- test.enrich(gene.set=msig_, res=res)
+
+msig_.enrich$qvalue <- qvalue::qvalue(msig_.enrich$pval)$qvalues
+msig_.enrich %>% filter(!is.na(pval)) %>% 
+  # filter(pval < (0.05 / nrow(mcarta.enrich %>% filter(!is.na(pval))))) %>% 
+  arrange(pval) %>% 
+  filter(qvalue <= 0.1) %>% 
+  gt() %>% 
+  tab_header(title='Enrichment in MisgDb Gene Sets') %>% 
+  gt_theme_nytimes()
+```
+
+# Disgenenet enrichment
+```{r}
+disgenenet_.enrich <- test.enrich(gene.set=disgenenet_, res=res)
+
+disgenenet_.enrich$qvalue <- qvalue::qvalue(disgenenet_.enrich$pval)$qvalues
+disgenenet_.enrich %>% filter(!is.na(pval)) %>% 
+  # filter(pval < (0.05 / nrow(mcarta.enrich %>% filter(!is.na(pval))))) %>% 
+  arrange(pval) %>% 
+  gt() %>% 
+  tab_header(title='Enrichment in Disgenenet Gene Sets') %>% 
+  gt_theme_nytimes()
+
+```
+# Common variant GWAS gene-set enrichment
+```{r}
+gwas_.enrich <- test.enrich_single(gene.set=tibble(id='Common Variant GWAS', genes=paste0(gwas_genes, collapse=',')), res=res)
+gwas_.enrich
+```
+
+
+# Combine gene-sets
+```{r}
+# t <- rbind(mcarta.enrich, msig_.enrich, disgenenet_.enrich) %>% filter(!is.na(pval))
+# nrow(t)
+# t <- t %>% arrange(pval)
+t <- readRDS('~/mito_rare-variant/analyses/gene_set_mitocarta_msig_disgenenet.enrich_results.rds') # load from save
+
+t %>% filter(!is.na(pval)) %>% 
+  filter(pval <= (0.05/nrow(t))) %>% 
+  arrange(pval) %>% 
+  gt() %>% 
+  tab_header(title='Enrichment in Gene Sets') %>% 
+  gt_theme_nytimes()
+
+```
+
+# Outlier test of bonf-sig in original run
+```{r}
+gene.sets <- bind_rows(mito.carta, msig_, disgenenet_)
+t_ <- t %>% filter(pval <= (0.05/nrow(t))) # bonf-sig (85 sets)
+
+outlier.tests <- list()
+for(i in 1:nrow(t_)){
+  outlier.tests[[i]] <-
+    test.enrich_single(gene.set = (gene.sets %>% filter(id==t_$id[i])), res=res)
+}
+outlier.tests <- bind_rows(outlier.tests)
+```
+
+# 85 sets are bonf-sig (45 are nominally sig (i.e. p <= 0.05) after outlier robustness check)
+```{r}
+outlier.tests %>% 
+    filter(test.pval <= (0.05/nrow(t))) %>% 
+    arrange(test.pval) %>% 
+    dplyr::select(id, n.in, n.out, est.in, est.out, test.pval, outliers, est.in_no_outliers, test.pval_no_outliers) %>% 
+    # write_tsv('~/mito_rare-variant/analyses/geneset.bonf_sig.enriched.n85.txt')
+    gt() %>% 
+    cols_label(id='Gene Set Name',
+               n.in="# Genes in set",
+               n.out="# Genes out of set",
+               est.in="Mean Z-score in set",
+               est.out="Mean Z-score out of set",
+               test.pval="P-value with outliers",
+               outliers="Outlier genes",
+               est.in_no_outliers="Mean Z-score in set with no outliers",
+               test.pval_no_outliers="P-value without outliers") %>% 
+    fmt_scientific(columns = c('test.pval', 'test.pval_no_outliers'), decimals = 2) %>%
+    fmt_number(columns = c('n.out'), sep_mark = ',', decimals = 0) %>% 
+    tab_style(style = list(cell_text(style='italic')),
+              locations=cells_body(columns=c('outliers'))) %>% 
+    fmt_number(columns = c('est.in','est.out','est.in_no_outliers'), decimals=1, drop_trailing_zeros = T) %>% 
+    opt_vertical_padding(scale = 0) #%>% 
+  # gtExtras::gtsave_extra('~/mito_rare-variant/analyses/tmp.png')
+
+  
+```
+
+# mito carta, accounting for outliers
+```{r}
+gene.sets <- mito.carta
+
+mito.carta_enrich <- list()
+for(i in 1:nrow(mito.carta)){
+  mito.carta_enrich[[i]] <-
+    test.enrich_single(gene.set = mito.carta[i,], res=res)
+}
+mito.carta_enrich <- bind_rows(mito.carta_enrich)
+```
+
+# disgenenet, accounting for outliers
+```{r}
+gene.sets <- disgenenet_
+
+disgenenet_.enrich <- list()
+for(i in 1:nrow(disgenenet_)){
+  message(i)
+  disgenenet_.enrich[[i]] <-
+    test.enrich_single(gene.set = disgenenet_[i,], res=res)
+}
+disgenenet_.enrich <- bind_rows(disgenenet_.enrich)
+```
+
+# msigdb, accounting for outliers
+```{r}
+gene.sets <- msig_
+imax <- nrow(gene.sets)
+pb <- txtProgressBar(min = 0, max = imax, style = 3)
+
+msig_.enrich <- list()
+for(i in 1:nrow(msig_)){
+  setTxtProgressBar(pb, i)
+  msig_.enrich[[i]] <-
+    test.enrich_single(gene.set = msig_[i,], res=res)
+}
+msig_.enrich <- bind_rows(msig_.enrich)
+```
+# combine outlier results, set results = 1% FDR of outlier-removed test p-values
+```{r}
+gene_sets.enrich <- bind_rows(msig_.enrich, mito.carta_enrich, disgenenet_.enrich)
+
+# For bonferroni enrichment results, test without outliers
+tmp <- gene_sets.enrich %>% filter(test.pval <= (0.05/nrow(gene_sets.enrich))) %>% arrange(test.pval)
+tmp$qvalue <- qvalue::qvalue(tmp$test.pval_no_outliers)$qvalue
+tmp %>% filter(qvalue <= 0.01) %>% arrange(test.pval)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

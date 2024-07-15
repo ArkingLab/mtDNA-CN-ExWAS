@@ -1,0 +1,352 @@
+---
+title: "UKB"
+author: "Dan Arking / Wen Shi"
+date: "April 10, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(GGally)
+library(lattice)
+library(leaps)
+library(splines)
+library(lubridate)
+library(lme4)
+library(gtools)
+library(survival)
+library(data.table)
+
+#function for cross-validation
+predict.regsubset=function(object, newdata,id,...) {
+  form=as.formula(object$call[[2]])
+  mat=model.matrix(form, newdata)
+  coefi=coef(object,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+```
+
+## Import WES read count data
+## Note that data are all log transformed variables except ebv
+## 
+
+```{r load_reads, echo=FALSE, cache=TRUE}
+
+filepath<-"C:/Users/darking/Desktop/UKB/WES/"
+#filepath<-""
+# Read in 200k idxstats summary 
+mtDNA = read_tsv(paste0(filepath,"statsOQFE_summary1.txt"))
+mtDNA1 = read_tsv(paste0(filepath,"statsOQFE_summary2.txt"))
+mtDNA<-rbind(mtDNA, mtDNA1)
+any(is.na(mtDNA))
+
+# mtDNA %>%
+#   select(Total:hla) %>%
+#   map(densityplot)
+
+# need to log transform for normality (except ebv)
+mtDNA<-mtDNA %>% mutate(across(c(Total:alt,decoy1:hla),log))
+
+# Add in batch information (and age, sex, genotyping.array)
+batch = read_tsv(paste0(filepath,"200k.wes.batch.covar.txt"))
+batch<-batch %>% mutate(across(c(sex,genotyping.array,wes.batch),as.factor))
+mtDNA<- full_join(mtDNA, batch %>% select(-FID), by=c("ID"="IID"))
+
+# Add in QC stats
+qc<-read_tsv(paste0(filepath,"qc_stats.txt"))
+qc<-qc %>% filter(!is.na(error_rate)) %>% select(-reads_duplicated) %>% mutate_all(.,as.numeric)
+mtDNA<- left_join(mtDNA, qc,by=c("ID"="samples") )
+names(mtDNA)[24]<-"properly_paired_reads"
+
+#generate densityplots to look for outliers
+mtDNA %>% 
+  select(average_quality:properly_paired_reads) %>%
+  map(densityplot)
+
+#error rate has a wierd tail above 0.005
+
+#establish outliers based on sd
+stdev<-mtDNA %>% 
+  select(Total:hla,average_quality:properly_paired_reads) %>%
+  map_dbl(sd,na.rm=TRUE)
+avg<-mtDNA %>% 
+  select(Total:hla,average_quality:properly_paired_reads) %>%
+  map_dbl(mean,na.rm=TRUE)
+high<-avg+(4.5*stdev)
+low<-avg-(4.5*stdev)
+high
+low
+
+# #correlation after normalizing for total reads
+# t1 = mtDNA %>%
+#   mutate_all(list(~./Total)) %>%
+#   select(Mapped:hla) %>%
+#   ggpairs(.,mapping=aes(alpha=0.00001))
+# t1
+
+#fix name with %
+#generate scatter plots for chrMT vs other variables
+covar=set_names(names(mtDNA)[2:length(mtDNA)])
+plots=map(covar,~ggplot(mtDNA, aes_string(x = .x, y = "chrMT")) + geom_point()) 
+plots
+
+
+#create a set of exclusion criteria to make sure outliers not driving results
+mtDNA<-mtDNA %>%
+  mutate(Exclude=ifelse((Total<high[1] & Unmapped<high[3] & chrX<15.7 & chrY<13.5 & random<high[8] & unknown<11.5 & ebv<9 & decoy1<11 & decoy2<10.9 & chrMT<high[7]&properly_paired_reads>0.965&hla>6),0,1))
+
+#check if outliers impacting correlations with top variable, decoy1
+summary(lm(chrMT~decoy1+I(decoy1^2)+I(decoy1^3),data=mtDNA))
+summary(lm(chrMT~decoy1+I(decoy1^2)+I(decoy1^3),data=subset(mtDNA,Exclude==0)))
+#more variance explained if no one dropped
+
+
+
+```
+
+## Based on correlation with uknown, decoy1, and decoy2, not really any outliers with respect to chrMT, so keeping all samples
+## use leaps package for covar selection, but include polynomial terms
+```{r trim, echo=FALSE, cache=TRUE, eval=FALSE}
+library(earth)
+library(caret)
+#note, dropped Unmapped, since this is a combination of Total+Mapped, and #Total does better
+test<-mtDNA %>% select(chrMT,Total,Mapped,Autosomal,random:hla,wes.batch:properly_paired_reads) %>% na.omit()
+# mars1<-earth(chrMT~.,data=test,degree=2)
+# 
+# tmp<-na.omit(mtDNA)
+# tmp$resid<-mars1$residuals
+# summary(lm(resid~age+sex,data=tmp))
+
+hyper_grid<-expand.grid(
+  degree=1:3,
+  nprune=seq(2,50,length.out=10) %>% floor()
+)
+set.seed(123)
+cv_mars<-train(
+  x=subset(test,select=-chrMT),
+  y=test$chrMT,
+  method="earth",
+  metric="RMSE",
+  trControl=trainControl(method="cv",number=10),
+  tuneGrid = hyper_grid
+)
+cv_mars$bestTune
+ggplot(cv_mars)
+
+tmp<-na.omit(mtDNA) %>% select(ID)
+tmp$resid_mars<-cv_mars$finalModel$residuals
+mtDNA<-left_join(mtDNA,tmp)
+summary(lm(resid_mars~age+sex,data=mtDNA))
+
+
+# model=regsubsets(chrMT~ns(Total,df=3)+ns(Mapped,df=3)+ns(Autosomal,df=3)+ns(unknown,df=3)+ns(random,df=3)+ns(decoy1,df=3)+ns(decoy2,df=3)+ns(average_quality,df=3)+ns(alt,df=3)+ns(hla,df=3)+ns(AvgGC_depth,df=3)+wes.batch+ns(error_rate,df=3)+ns(properly_paired_reads,df=3),data=mtDNA,nvmax=20,really.big = TRUE)
+# sum.model=summary(model)
+# cp=which.min(sum.model$cp)
+# bic=which.min(sum.model$bic)
+# adjr=which.max(sum.model$adjr2)
+# 
+# plot(sum.model$adjr2)
+# points(adjr,sum.model$adjr2[adjr],col="red",cex=2,pch=20)
+# plot(sum.model$bic)
+# points(bic,sum.model$bic[bic],col="red",cex=2,pch=20)
+# plot(sum.model$cp)
+# points(cp,sum.model$cp[cp],col="red",cex=2,pch=20)
+
+#try 10-fold cross validation for model selection
+data<-test
+k=10
+folds=sample(1:k,nrow(data),replace=TRUE)
+ms<-30
+cv.errors=matrix(NA,k,ms,dimnames=list(NULL,paste(1:ms)))
+for(j in 1:k) {
+  best.fit=regsubsets(chrMT~ns(Total,df=4)+ns(Mapped,df=4)+ns(Autosomal,df=4)+ns(unknown,df=4)+ns(random,df=4)+ns(decoy1,df=4)+ns(decoy2,df=4)+ns(average_quality,df=4)+ns(alt,df=4)+ns(hla,df=4)+ns(AvgGC_depth,df=4)+wes.batch+ns(error_rate,df=4)+ns(properly_paired_reads,df=4),data=data[folds!=j,],nvmax=ms,really.big = TRUE)
+  for(i in 1:ms) {
+    pred=predict.regsubset(best.fit,data[folds==j,],id=i)
+    cv.errors[j,i]=mean((data$chrMT[folds==j]-pred)^2)
+  }
+}
+#use 1 se rule
+mean.cv.errors=apply(cv.errors,2,mean)
+cv=which.min(mean.cv.errors)
+se.cv.errors=apply(cv.errors,2,sd)/sqrt(k)
+diff=mean.cv.errors-se.cv.errors-mean.cv.errors[cv]
+msize=min(which(diff<0))
+
+plot(mean.cv.errors,type='b')
+points(cv,mean.cv.errors[cv],col="red",cex=2,pch=20)
+points(msize,mean.cv.errors[msize],col="blue",cex=2,pch=20)
+
+#get variables in model
+model=regsubsets(chrMT~ns(Total,df=4)+ns(Mapped,df=4)+ns(Autosomal,df=4)+ns(unknown,df=4)+ns(random,df=4)+ns(decoy1,df=4)+ns(decoy2,df=4)+ns(average_quality,df=4)+ns(alt,df=4)+ns(hla,df=4)+ns(AvgGC_depth,df=4)+wes.batch+ns(error_rate,df=4)+ns(properly_paired_reads,df=4),data=mtDNA,nvmax=ms,really.big = TRUE)
+vars1=names(coef(model,cv))
+vars=names(coef(model,msize))
+
+#re-run CV with selected variables (Mapped, Autosomal, unknown, random, decoy1, decoy2, AvgGC_depth, wes.batch, properly_paired reads), and up df for those that max out in previous run, drop those that don't show up in any models
+ms=30
+model=regsubsets(chrMT~ns(Mapped,df=3)+ns(Autosomal,df=6)+ns(unknown,df=6)+ns(random,df=2)+ns(decoy1,df=6)+ns(decoy2,df=3)+ns(AvgGC_depth,df=6)+ns(properly_paired_reads,df=2)+wes.batch, data=mtDNA,nvmax=ms)
+#keep same folds as previous
+cv.errors=matrix(NA,k,ms,dimnames=list(NULL,paste(1:ms)))
+for(j in 1:k) {
+  best.fit=regsubsets(chrMT~ns(Mapped,df=3)+ns(Autosomal,df=6)+ns(unknown,df=6)+ns(random,df=2)+ns(decoy1,df=6)+ns(decoy2,df=3)+ns(AvgGC_depth,df=6)+ns(properly_paired_reads,df=2)+wes.batch,data=data[folds!=j,],nvmax=33)
+  for(i in 1:ms) {
+    pred=predict.regsubset(best.fit,data[folds==j,],id=i)
+    cv.errors[j,i]=mean((data$chrMT[folds==j]-pred)^2)
+  }
+}
+#use 1 se rule
+mean.cv.errors=apply(cv.errors,2,mean)
+cv=which.min(mean.cv.errors)
+se.cv.errors=apply(cv.errors,2,sd)/sqrt(k)
+diff=mean.cv.errors-se.cv.errors-mean.cv.errors[cv]
+msize=min(which(diff<0))
+
+plot(mean.cv.errors,type='b')
+points(cv,mean.cv.errors[cv],col="red",cex=2,pch=20)
+points(msize,mean.cv.errors[msize],col="blue",cex=2,pch=20)
+
+#get variables in model
+vars=names(coef(model,msize))
+
+#variables now: Mapped, unknown, decoy1, decoy2, properly_paired_reads, wes.batch
+#upping to df=15, and all terms going in for unknown and decoy1 (not including first 4 for each)
+#use anova to reduce comlexity, require P<0.001
+model0=lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=6)+ns(decoy1,df=6)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA)
+model1=lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=15)+ns(decoy1,df=6)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA)
+model2=lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=15)+ns(decoy1,df=15)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA)
+
+model1=lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=15)+ns(decoy1,df=15)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA)
+model0=lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=15)+ns(decoy1,df=15)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA)
+anova(model0,model1)
+#model0=lm(chrMT~ns(Total,df=3)+ns(unknown,df=4)+ns(decoy1,df=7)+decoy2, data=mtDNA)
+anova(model0,model1)
+anova(model1,model2)
+summary(model2)
+summary(model0)
+
+
+#generate residuals
+# #a bit complicated, since want to apply back to full dataset, so need to make chrMT==NA for excluded folks
+# data<-mtDNA %>%
+#   mutate(chrMT=ifelse(Exclude==0,mtDNA$chrMT,NA))
+mtDNA$resid_lm=residuals(lm(chrMT~ns(Mapped,df=2)+ns(unknown,df=6)+ns(decoy1,df=6)+ns(decoy2,df=2)+properly_paired_reads+wes.batch, data=mtDNA, na.action=na.exclude))
+
+#plot residuals
+covar=set_names(names(mtDNA)[2:length(mtDNA)])
+plots=map(covar,~ggplot(mtDNA, aes_string(x = .x, y = "resid.mtDNA")) + geom_point()) 
+plots
+
+write_tsv(mtDNA %>% select(ID,resid_lm,resid_mars), paste0(filepath,"CN_residuals_DEA.txt"))
+
+```
+## Read in cell counts and merge
+
+```{r load_data, echo=FALSE, cache=TRUE, eval=FALSE}
+pheno<-readRDS(paste0(filepath,"../phenotypes/ukbPheno_12022020_genotypes.rds"))
+pheno.mtDNA<-left_join(mtDNA %>% select(ID,resid_mars,resid_lm),pheno,by=c("ID"="IID"))
+summary(lm(resid_lm~age+sex+log(WBC+1)+Platelet+rs10085457_A+rs445_T+rs7896518_G,data=pheno.mtDNA %>% filter(race=="White",used.in.pca.calculation==1)))
+summary(lm(resid_mars~age+sex+log(WBC+1)+Platelet+rs10085457_A+rs445_T+rs7896518_G,data=pheno.mtDNA%>% filter(race=="White",used.in.pca.calculation==1)))
+
+#all known covars significant and in the expected direction!
+
+##test for additional covars
+#pairwise correlations to look for outliers
+plot1<-mtDNA.pheno %>%
+  filter(!is.na(WBC),!is.na(NucRBC)) %>%
+  select(resid.mtDNA, WBC:NucRBC) %>%
+  ggpairs()
+plot1
+
+#need to log tranform: WBC, Lymph, Mono, Neutrophil, Eos, Baso
+#very clear outliers, easier to see by density plots
+mtDNA.pheno<-mtDNA.pheno %>%
+  mutate(lWBC=log(WBC+1),lRBC=log(RBC+1),lLymph=log(Lymph+1),lMono=log(Mono+1),lNeutrophil=log(Neutrophil+1),lEos=log(Eos+1),lBaso=log(Baso+1),lNucRBC=log(NucRBC+1))
+
+covar=set_names(names(mtDNA.pheno)[c(22,33:40)])
+plots=map(covar,~ggplot(mtDNA.pheno, aes_string(x = .x, y = "resid.mtDNA")) + geom_point()) 
+plots
+
+#set filters
+# plot2<-mtDNA.pheno %>%
+#   filter(WBC>1,WBC<25,RBC<7,RBC>2.5,Platelet<750,Platelet>10,Lymph>0.10,Lymph<10,Mono<3,Neutrophil<15,Eos<1.5,Baso<1) %>%
+#   select(resid.mtDNA, WBC:NucRBC) %>%
+#   ggpairs()
+# plot2
+
+#trimming criteria based on visual inspection
+mtDNA.pheno<-mtDNA.pheno %>%
+  mutate(Exclude2=ifelse((lWBC>1.25 & lWBC<3 & lRBC<2 & lRBC>1.4 & Platelet<500 & Platelet>10 & lLymph>0.10 & lLymph<2 & lMono<0.9 & lNeutrophil>0.75 & lNeutrophil<2.75 & lEos<0.75 & lBaso<0.45),0,1))
+plots=map(covar,~ggplot(subset(mtDNA.pheno,Exclude2==0), aes_string(x = .x, y = "resid.mtDNA")) + geom_point()) 
+plots
+
+#for model selection, cannot run with NucRBC df>1
+model=regsubsets(resid.mtDNA~ns(age,df=3)+sex+ns(lWBC,df=3)+ns(lRBC,df=3)+ns(Platelet,df=3)+ns(lLymph,df=3)+ns(lMono,df=3)+ns(lNeutrophil,df=3)+ns(lEos,df=3)+ns(lBaso,df=3)+lNucRBC+NucRBC_cat,data=subset(mtDNA.pheno,Exclude2==0),nvmax=30)
+sum.model=summary(model)
+cp=which.min(sum.model$cp)
+bic=which.min(sum.model$bic)
+adjr=which.max(sum.model$adjr2)
+
+plot(sum.model$adjr2)
+points(adjr,sum.model$adjr2[adjr],col="red",cex=2,pch=20)
+plot(sum.model$bic)
+points(bic,sum.model$bic[bic],col="red",cex=2,pch=20)
+plot(sum.model$cp)
+points(cp,sum.model$cp[cp],col="red",cex=2,pch=20)
+
+data<-mtDNA.pheno %>%
+  filter(Exclude2==0)
+ms=30
+k=10
+folds=sample(1:k,nrow(data),replace=TRUE)
+cv.errors=matrix(NA,k,ms,dimnames=list(NULL,paste(1:ms)))
+for(j in 1:k) {
+  best.fit=regsubsets(resid.mtDNA~ns(age,df=3)+sex+ns(lWBC,df=3)+ns(lRBC,df=3)+ns(Platelet,df=3)+ns(lLymph,df=3)+ns(lMono,df=3)+ns(lNeutrophil,df=3)+ns(lEos,df=3)+ns(lBaso,df=3)+lNucRBC+NucRBC_cat,data=data,nvmax=ms)
+  for(i in 1:ms) {
+    pred=predict.regsubset(best.fit,data[folds==j,],id=i)
+    cv.errors[j,i]=mean((data$resid.mtDNA[folds==j]-pred)^2)
+  }
+}
+#use 1 se rule
+mean.cv.errors=apply(cv.errors,2,mean)
+cv=which.min(mean.cv.errors)
+se.cv.errors=apply(cv.errors,2,sd)/sqrt(k)
+diff=mean.cv.errors-se.cv.errors-mean.cv.errors[cv]
+msize=min(which(diff<0))
+
+plot(mean.cv.errors,type='b')
+points(cv,mean.cv.errors[cv],col="red",cex=2,pch=20)
+points(msize,mean.cv.errors[msize],col="blue",cex=2,pch=20)
+
+#get variables in model and add age and sex
+vars=names(coef(model,msize))
+
+#check df for final model
+model2=lm(resid.mtDNA~sex+ns(Platelet,df=3)+ns(lNeutrophil,df=3),data=subset(mtDNA.pheno,Exclude2==0))
+model1=lm(resid.mtDNA~sex+ns(age,df=2)+ns(Platelet,df=3)+ns(lNeutrophil,df=3),data=subset(mtDNA.pheno,Exclude2==0))
+model0=lm(resid.mtDNA~sex+ns(age,df=2)+ns(Platelet,df=3)+ns(lNeutrophil,df=2),data=subset(mtDNA.pheno,Exclude2==0))
+anova(model0,model1,model2)
+
+#generate residuals
+#a bit complicated, since want to apply back to full dataset, so need to make chrMT==NA for excluded folks
+data<-mtDNA.pheno %>%
+  mutate(resid.mtDNA=ifelse(Exclude2==0,mtDNA$resid.mtDNA,NA))
+
+final.model=lm(resid.mtDNA~sex+ns(age,df=2)+ns(Platelet,df=3)+ns(lNeutrophil,df=2),data=data,na.action=na.exclude)
+summary(final.model)
+mtDNA.pheno$resid2.mtDNA<-residuals(final.model)
+
+#generate residuals
+#a bit complicated, since want to apply back to full dataset, so need to make chrMT==NA for excluded folks
+data<-final.pheno %>%
+  mutate(resid.mtDNA=ifelse(Exclude2==0,final.pheno$resid.mtDNA,NA))
+
+final.model=lm(resid.mtDNA~sex.x+ns(age,df=2)+Lymph+Platelet+Mono+NucRBC+Neutrophil+Baso+Eos,data=data,na.action=na.exclude)
+summary(final.model)
+final.pheno$resid3.mtDNA<-residuals(final.model)
+
+
+
+```
+

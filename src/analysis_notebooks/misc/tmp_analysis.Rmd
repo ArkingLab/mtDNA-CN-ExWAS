@@ -1,0 +1,28 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+```{r}
+library(dplyr)
+library(readr)
+library(stargazer)
+```
+
+# ijkl analysis
+```{r results='asis',message=F}
+ijkl <- readRDS('~/projects/mito_rare-variant/ijkl.rds')
+
+# FDR significant genes <= 10% FDR
+fdr_0.1 <- ijkl %>% filter(fdr.0.1==TRUE) %>% arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all = T) %>% select(gene, pval_SMMAT, qvalue, maf, varset)
+
+# Boneferroni significant genes
+# 0.05 / (19k * 2)
+bonf.cutoff <- 0.05 / (19398 * 2)
+bonf <- ijkl %>% arrange(pval_SMMAT) %>% mutate(bonf.sig=ifelse(pval_SMMAT <= bonf.cutoff,TRUE,FALSE)) %>% filter(bonf.sig==TRUE) %>% distinct(gene, .keep_all = T) %>% select(gene, pval_SMMAT, qvalue, maf, varset)
+
+# tmp %>% write_tsv('~/mito_rare-variant/tmp_ijkl.txt')
+stargazer(tmp, type='html', )
+```

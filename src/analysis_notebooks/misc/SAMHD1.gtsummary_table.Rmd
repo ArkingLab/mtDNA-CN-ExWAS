@@ -1,0 +1,134 @@
+---
+title: "Figure 1B SAMHD1 Loo + Conditional Independence of Variants Analysis"
+output: html_notebook
+---
+
+# Assessing independent rare variants in genes that are genome-wide significant in aggregate testing
+
+```{r Setup, include=FALSE}
+library(gtsummary)
+expSup <- function(w, digits=0) {
+    sprintf(paste0("%.", digits, "fx10^%d"), w/10^floor(log10(abs(w))), floor(log10(abs(w))))
+}
+```
+
+```{r SAMHD1}
+# SAMHD1
+x <- readRDS('~/mito_rare-variant/analyses/burden/SAMHD1/samhd1.n450k.fit.full.rds')
+v <- readRDS('~/mito_rare-variant/analyses/burden/SAMHD1/samhd1.n450k.var.breakdown.rds')
+# variants <- names(sort(summary(x)$coef[,4][2:nrow(summary(x)$coef)]))
+# fdr_sig.variants <-
+#   c(
+#     'var.10978877.pos.20_36893060_mac_147',
+#     'var.10978999.pos.20_36898455_mac_245',
+#     'var.10979118.pos.20_36905431_mac_37',
+#     'var.10979228.pos.20_36912503_mac_7',
+#     'var.10979291.pos.20_36916829_mac_13',
+#     'var.10979500.pos.20_36930804_mac_11',
+#     'var.10979655.pos.20_36941097_mac_12',
+#     'var.10979795.pos.20_36951642_mac_12',
+#     'mac_lt_6'
+#   )
+fdr_sig.variants <-
+  c(
+    'var.330053.pos.20_36893060_mac_304',
+    'var.330236.pos.20_36898455_mac_599',
+    'var.330419.pos.20_36905431_mac_104',
+    'var.330682.pos.20_36916800_mac_8',
+    'var.330727.pos.20_36917001_mac_13',
+    'var.330977.pos.20_36930783_mac_197',
+    'var.330982.pos.20_36930804_mac_24',
+    'var.331450.pos.20_36951642_mac_29',
+    'mac_lt_6'
+  )
+
+gt1.SAMHD1 <- 
+  tbl_regression(x, include = all_of(fdr_sig.variants), pvalue_fun = function(x) prettyNum(x, digits=2),
+  # tbl_regression(x, include = all_of(fdr_sig.variants), pvalue_fun = ~style_pvalue(.x, digits = 2), 
+  # tbl_regression(x, include = all_of(fdr_sig.variants), pvalue_fun = function(x) expSup(x, digits=2), 
+                 label = list(var.330053.pos.20_36893060_mac_304 ~ "chr20:36,893,060:C>T | MAC = 304",
+                              var.330236.pos.20_36898455_mac_599 ~ "chr20:36,898,455:C>G | MAC = 599",
+                              var.330419.pos.20_36905431_mac_104 ~ "chr20:36,905,431:A>G | MAC = 104",
+                              var.330682.pos.20_36916800_mac_8 ~ "chr20:36,916,800:A>C | MAC = 8",
+                              var.330727.pos.20_36917001_mac_13 ~ "chr20:36,917,001:C>G  | MAC = 13",
+                              var.330977.pos.20_36930783_mac_197 ~ "chr20:36,930,783:A>T | MAC = 197",
+                              var.330982.pos.20_36930804_mac_24 ~ "chr20:36,930,804:C>T | MAC = 24",
+                              var.331450.pos.20_36951642_mac_29 ~ "chr20:36,951,642:A>T | MAC = 29",
+                              mac_lt_6 ~ "MAC < 6 Synthetic Allele")) %>%
+  bold_p(t=(0.05 / (length(coef(x))-1))) %>%
+  add_glance_source_note() %>%
+  # add_q() %>%
+  add_significance_stars(hide_ci = F, hide_p = F) %>%
+  modify_caption("Independent Rare Variants in **_SAMHD1_** at FDR ≤ 10% Associated with mtDNA-CN") %>%
+  modify_header(update = list(label ~ "**Variant**"))
+gt1.SAMHD1
+```
+
+
+
+# Leave-one-out plot for n450k SAMHD1 variants
+```{r}
+require(dplyr)
+source('~/mito_rare-variant/scripts/leave_one_out4.R')
+# Pre-req: run loo(), save results to `res.loo`
+res.loo <- readRDS('~/mito_rare-variant/analyses/burden/SAMHD1/SAMHD1.loo.res.rds')
+res.loo %>% arrange(desc(pval_SMMAT))
+# remove position 20:36892861 (MAC 3598 - this is in 3' UTR of SAMHD1, so not protein coding)? Causes odd spike
+res.loo <- res.loo %>% filter(pos!=36892861)
+
+# which indices in variant list correspond to known bonf-sig & fdr10pct variants?
+tmp <- tibble(var=seq(1,nrow(res.loo)), pval_SMMAT=res.loo$pval_SMMAT, pos=res.loo$pos)
+# bonf
+tmp %>% filter(pos==36893060) # 27
+tmp %>% filter(pos==36898455) # 69
+tmp %>% filter(pos==36905431) # 121
+tmp %>% filter(pos==36930783) # 290
+# fdr 10pct
+tmp %>% filter(pos==36916800) # 204
+tmp %>% filter(pos==36917001) # 213
+tmp %>% filter(pos==36930804) # 294
+tmp %>% filter(pos==36951642) # 421 (not 420)
+
+# Plot
+g1 <- res.loo %>%
+  ggplot(aes(x=seq(1,nrow(res.loo)), y=-log10(pval_SMMAT))) +
+  # ggplot(aes(x=seq(1,nrow(res.loo)), y=-log10(pval_burden))) +
+  # ggplot(aes(x = seq(1, nrow(res.loo)), y = -log10(pval_theta))) +
+  geom_line(alpha = 0.7, size=0.45) +
+  # geom_point(alpha = 1 / 2, size = 0.75) +
+  xlab('Variant Left Out in Aggregate Test') +
+  ylab('-log10 P-Value SMMAT') +
+  geom_vline(xintercept = c(27,69,121,290), color='red', size=0.2) + # bonf
+  geom_vline(xintercept = c(204,213,294,421), color='red', size=0.2, linetype='dashed') + # fdr10pct
+    theme_minimal()
+g1
+
+# save
+# ggplot2::ggsave(
+#   '~/mito_rare-variant/analyses/burden/SAMHD1/SAMHD1.loo.res.plot.pdf',
+#   plot = g1,
+#   device = 'pdf',
+#   width = 5,
+#   height = 5,
+#   units = 'in'
+# )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
