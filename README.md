@@ -8,22 +8,27 @@ This repo contains code (pipeline, scripts, and analysis notebooks) relating to 
 with mitochondrial DNA copy number" (PMID 36311265, doi: 10.1016/j.xhgg.2022.100147).
 
 
-This repository is a snapshot of a private repository with more comprehensive access to a variety of resources for the project along with results from the single- and rare-variant burden testing.
+This repository is a snapshot of a private repository with more comprehensive access to a variety of resources for the project along with results from the single- and rare-variant burden testing.  Please reach out to `vpillal1@alumni.jh.edu` or `darking@jhmi.edu` for raw BOLT-LMM results from single- and GENESIS aggregate rare-variant burden testing results.
+
+# Study Design
+
+
+[Study Design](study_design.png)
 
 
 # R Package Requirements
 
-Install BIOCONDUCTOR Install Manager. 
+Install BIOCONDUCTOR Install Manager.
 
 ```
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 ```
 
-## Aggregate Association Testing  
+## Aggregate Association Testing
 - GENESIS[https://bioconductor.org/packages/release/bioc/html/GENESIS.html]
 - SeqArray[https://bioconductor.org/packages/release/bioc/html/SeqArray.html]
- 
+
 
 Install Bioconductor packages
 ```
@@ -51,4 +56,3 @@ gwas_genes.txt: Genes identified from GWAS
 depletion_genes.txt: 15 genes known to be causal for mtDNA depletion syndromes
 
 ## Mitocarta gene pathways are located on the server, here: /dcs01/arking/arkinglab/resources/mitoCarta/Human.MitoPathways3.0.gmx
-
