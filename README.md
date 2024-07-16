@@ -42,7 +42,7 @@ BiocManager::install("GENESIS")
 2. **Leave one out testing:**
    Example call:
    ```
-   Rscript src/scripts/optimized_loo_script.R --gene GENE_NAME --chr CHROMOSOME --af_max 0.01 --output results.rds --plot --plot_type SMMAT --save_dir ./plots --cores 4
+   Rscript src/scripts/leave_one_out.R --gene GENE_NAME --chr CHROMOSOME --af_max 0.01 --output results.rds --plot --plot_type SMMAT --save_dir ./plots --cores 4
    ```
 
 3. **Power analysis:**
@@ -72,6 +72,8 @@ BiocManager::install("GENESIS")
 2. **Table 1B** `src/analysis_notebooks/Table_1B.Rmd`
 3. **PheWAS Analyses** `src/analysis_notebooks/phewas-analyses.Rmd`
 4. **PheWAS Additional Analyses** `src/analysis_notebooks/phewas-additional-analyses.Rmd`
+5. **Model Genetic Architecture**
+`src/analysis_notebooks/model-genetic-architecture.Rmd`
 
 ## Data Locations
 

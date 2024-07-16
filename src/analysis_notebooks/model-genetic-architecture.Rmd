@@ -1,0 +1,259 @@
+---
+title: "Modeling Mitochondrial Copy Number Genetic Architecture"
+output:
+  html_document:
+    df_print: paged
+---
+Model genetic architecture of mitochondrial copy number on two parameters: minor allele frequency and effect size.
+Use 129 independent SNPs discovered through GWAS.
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load required libraries
+library(tidyverse)
+library(hrbrthemes)
+library(betafunctions)
+library(betareg)
+library(genpwr)
+library(reshape2)
+library(rsnps)
+library(aomisc)
+library(emdbook)
+library(ggnewscale)
+library(gt)
+
+# Set the working directory for all chunks
+knitr::opts_knit$set(root.dir = "~/projects/mtDNA-CN-ExWAS/")
+
+# Set global variables
+SAVEDIR <- 'src/results/'
+N <- 414665
+SD_Y <- 0.9843152
+ALPHA <- 7.389127e-09  # 0.05 / 4,335,879
+
+# Load and preprocess GWAS data
+load_gwas_data <- function() {
+  gwas <- read_csv('mtDNA-CN-ExWAS/resources/mtDNA_CN_GWAS_results.csv')
+  gwas$A1FREQ.2 <- ifelse(gwas$A1FREQ > 0.5, 1 - gwas$A1FREQ, gwas$A1FREQ)
+  gwas$`EFFECT SIZE ESTIMATE` <- ifelse(gwas$A1FREQ > 0.5, -1 * gwas$`EFFECT SIZE ESTIMATE`, gwas$`EFFECT SIZE ESTIMATE`)
+  return(gwas)
+}
+
+gwas <- load_gwas_data()
+```
+
+## Compute Power to Detect GWAS Results
+
+```{r power_calculations}
+compute_power <- function(maf, abs_beta) {
+  pw <- genpwr::power.calc.linear(
+    N = N, MAF = maf, ES = abs_beta, sd_y = SD_Y, Alpha = ALPHA,
+    True.Model = 'Dominant', Test.Model = 'Dominant'
+  )
+  return(as_tibble(pw) %>% mutate(Power = `Power_at_Alpha_7.389127e-09`))
+}
+
+maf <- emdbook::lseq(from = 1e-04, to = 0.5, length.out = 200)
+abs_beta <- seq(from = 0, to = 1, length.out = 200)
+pw_df <- expand.grid(maf = maf, abs_beta = abs_beta)
+
+pw <- compute_power(pw_df$maf, pw_df$abs_beta)
+```
+
+## Plot Power Heatmap
+
+```{r plot_power_heatmap}
+plot_power_heatmap <- function(pw, gwas) {
+  df <- pw %>% dplyr::select(MAF, ES, Power)
+  
+  ggplot() +
+    geom_point(data = df, aes(x = MAF, y = ES, color = Power), alpha = 1, size = 1) +
+    scale_color_continuous(high = "#BFE1B0", low = "#137177") +
+    geom_point(data = gwas, aes(x = A1FREQ.2, y = abs(`EFFECT SIZE ESTIMATE`)), alpha = 1, color = 'black', size = 1) +
+    scale_x_log10() +
+    labs(
+      x = 'Minor Allele Frequency (log-scale)',
+      y = 'Absolute Effect Size (SD)',
+      title = 'Power as a function of Effect Size and MAF',
+      subtitle = paste0('N=', N, '\nType I Error (alpha) = ', ALPHA, ' (Genome-wide significance)')
+    ) +
+    theme_modern_rc(grid = TRUE, ticks = TRUE)
+}
+
+power_heatmap <- plot_power_heatmap(pw, gwas)
+print(power_heatmap)
+```
+
+## Model Genetic Architecture Using Power Curve
+
+```{r power_curve_model}
+fit_power_curve <- function(gwas) {
+  df <- data.frame(beta = abs(gwas$`EFFECT SIZE ESTIMATE`), maf = gwas$A1FREQ.2)
+  m_power <- drm(beta ~ maf, fct = DRC.powerCurve(), data = df)
+  return(m_power)
+}
+
+predict_power_curve <- function(model, seq) {
+  pred_beta <- predict(model, data.frame(maf = seq))
+  return(tibble(maf = seq, beta = pred_beta))
+}
+
+m_power <- fit_power_curve(gwas)
+seq <- emdbook::lseq(1e-07, 0.5, length.out = 500)
+df_pred <- predict_power_curve(m_power, seq)
+
+plot_power_curve <- function(gwas, df_pred, m_power) {
+  model_coef <- paste0(
+    'Effect Size = ',
+    round(m_power$coefficients[1], 2),
+    ' x MAF ^',
+    round(m_power$coefficients[2], 2)
+  )
+  
+  ggplot() +
+    geom_point(data = gwas, aes(x = A1FREQ.2, y = abs(`EFFECT SIZE ESTIMATE`)), color = 'black') +
+    geom_line(data = df_pred, aes(x = maf, y = beta, col = "red")) +
+    scale_x_log10() +
+    scale_color_discrete(name = "Model Fit\nY=aX^b Power law model", labels = c(model_coef)) +
+    labs(
+      x = 'Minor Allele Frequency (log-scale)',
+      y = 'Absolute Effect Size (Std. Dev.)',
+      title = 'Genetic architecture of Mitochondrial Copy Number',
+      subtitle = 'n=129 independent Autosomal SNPs from GWAS'
+    ) +
+    theme_ipsum_rc() +
+    theme(
+      legend.position = c(.95, .9),
+      legend.justification = c("right", "top"),
+      legend.box.just = "right",
+      legend.margin = margin(6, 6, 6, 6)
+    )
+}
+
+power_curve_plot <- plot_power_curve(gwas, df_pred, m_power)
+print(power_curve_plot)
+```
+
+## Add Rare Variant Results
+
+```{r rare_variants}
+# Rare variant bonferroni-passing results from bolt-lmm single-variant tests
+rv <- tibble(
+  maf = c(4.91825e-03, 3.82814e-04, 4.07756e-04),
+  beta = c(-0.173681, 0.621255, 0.695547),
+  pval = c(8.5e-13, 4.5e-15, 1.4e-19)
+)
+
+plot_with_rare_variants <- function(gwas, df_pred, rv, m_power) {
+  model_coef <- paste0(
+    'Effect Size = ',
+    round(m_power$coefficients[1], 2),
+    ' x MAF ^',
+    round(m_power$coefficients[2], 2)
+  )
+  
+  ggplot() + 
+    geom_line(data = df_pred, aes(x = maf, y = beta, col = "red")) +
+    geom_hline(data = rv, aes(yintercept = abs(beta)), linetype = 'dashed', color = 'blue', alpha = 0.7) +
+    geom_vline(data = rv, aes(xintercept = maf), linetype = 'dashed', color = 'blue', alpha = 0.7) +
+    geom_point(data = gwas, aes(x = A1FREQ.2, y = abs(`EFFECT SIZE ESTIMATE`)), color = 'black') +
+    geom_point(data = rv, aes(x = maf, y = abs(beta)), col = 'red', size = 2) +
+    scale_x_log10() +
+    ylim(c(0, 0.8)) +
+    labs(
+      x = 'Minor Allele Frequency (log-scale)',
+      y = 'Absolute Effect Size (Std. Dev.)',
+      subtitle = 'n=129 GWAS + 3 ExWAS independent hits',
+      color = "Model Fit\nY=aX^b Power law model"
+    ) +
+    scale_color_discrete(labels = c(model_coef)) +
+    theme_ipsum_rc() +
+    theme(
+      legend.position = c(0.95, .7),
+      legend.justification = c("right", "top"),
+      legend.box.just = "right",
+      legend.margin = margin(6, 6, 6, 6)
+    )
+}
+
+rare_variants_plot <- plot_with_rare_variants(gwas, df_pred, rv, m_power)
+print(rare_variants_plot)
+```
+
+## Compute Power Isobars
+
+```{r power_isobars}
+compute_es_for_power <- function(maf, power) {
+  es_res <- genpwr::es.calc.linear(
+    N = N, MAF = maf, power = power, sd_y = SD_Y, Alpha = ALPHA,
+    True.Model = 'Dominant', Test.Model = 'Dominant'
+  )
+  return(es_res$`ES_at_Alpha_7.389127e-09`)
+}
+
+maf <- emdbook::lseq(from = 1/(2*N), to = 0.5, length.out = 500)
+powers <- c(0.1, 0.5, 0.8, 0.9)
+
+es_res <- tibble(maf = maf) %>%
+  mutate(across(
+    set_names(powers, paste0("es_", powers*100)),
+    ~map_dbl(maf, ~compute_es_for_power(.x, .y))
+  ))
+
+es_res_melted <- pivot_longer(es_res, cols = starts_with("es_"), names_to = "power", values_to = "es")
+
+plot_power_isobars <- function(es_res_melted, gwas, df_pred) {
+  ggplot() +
+    geom_line(data = es_res_melted, aes(x = maf, y = es, color = power)) +
+    geom_point(data = gwas, aes(x = A1FREQ.2, y = abs(`EFFECT SIZE ESTIMATE`)), color = 'black', size = 1) +
+    geom_line(data = df_pred, aes(x = maf, y = beta), color = 'blue', linetype = 'dashed') +
+    scale_x_log10() +
+    scale_color_discrete(name = 'Power', labels = c('10%', '50%', '80%', '90%')) +
+    labs(
+      x = 'Minor Allele Frequency (log-scale)',
+      y = 'Absolute Effect Size (SD mtDNA-CN)',
+      title = 'Power Isobars for Mitochondrial Copy Number',
+      caption = bquote('N=' ~ .(N) ~ '\nType I Error (alpha) =' ~ .(ALPHA))
+    ) +
+    theme_ipsum_rc() +
+    theme(legend.position = 'bottom', plot.caption = element_text(hjust = 0.5))
+}
+
+power_isobars_plot <- plot_power_isobars(es_res_melted, gwas, df_pred)
+print(power_isobars_plot)
+```
+
+## BOLT Results Analysis
+
+```{r bolt_results}
+load_bolt_results <- function() {
+  res <- read_tsv('~/projects/mito_rare-variant/n414k.bolt_lmm_results.bonf_sig.mac_gteq6.txt')
+  res$bonf.sig <- rep('TRUE', nrow(res))
+  return(res)
+}
+
+compute_power_for_bolt <- function(res) {
+  res$power <- map_dbl(1:nrow(res), function(i) {
+    tmp1 <- genpwr::power.calc.linear(
+      N = N,
+      MAF = res$A1FREQ[i],
+      ES = abs(res$BETA[i]),
+      sd_y = SD_Y,
+      Alpha = ALPHA,
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+    return(tmp1$`Power_at_Alpha_7.389127e-09`)
+  })
+  return(res)
+}
+
+bolt_results <- load_bolt_results()
+bolt_results_with_power <- compute_power_for_bolt(bolt_results)
+
+# Display results table
+bolt_results_with_power %>% 
+  dplyr::select(SNP, A1FREQ, BETA, MAC, P_BOLT_LMM, power) %>% 
+  arrange(P_BOLT_LMM) %>%
+  gt() %>%
+  fmt_number(columns = c(A1FREQ, BETA, P_BOLT_LMM, power), decimals = 4)
+```
