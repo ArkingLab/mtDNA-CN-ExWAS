@@ -54,7 +54,8 @@ compute_power <- function(maf, abs_beta) {
 
 maf <- emdbook::lseq(from = 1e-04, to = 0.5, length.out = 200)
 abs_beta <- seq(from = 0, to = 1, length.out = 200)
-pw_df <- expand.grid(maf = maf, abs_beta = abs_beta)
+# pw_df <- expand.grid(maf = maf, abs_beta = abs_beta)
+pw_df <- data.frame(maf=maf, abs_beta=abs_beta)
 
 pw <- compute_power(pw_df$maf, pw_df$abs_beta)
 ```
