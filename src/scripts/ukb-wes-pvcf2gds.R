@@ -3,6 +3,7 @@
 # Uses `SeqArray::seqVCF2GDS`
 # Combines UK Biobank WES pVCF blocks (b0 -- bN) for a single chromosome
 # Creates merged chromosome-specific pVCF --> GDS
+# Author: Vamsee Pillalamarri
 
 suppressPackageStartupMessages({
   library(argparser)
