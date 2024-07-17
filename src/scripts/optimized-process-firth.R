@@ -1,3 +1,6 @@
+# Rewritten function to process PheWAS of rare-variant carriers
+# Author: Vamsee Pillalamarri
+
 library(logistf)
 library(dplyr)
 library(furrr)
