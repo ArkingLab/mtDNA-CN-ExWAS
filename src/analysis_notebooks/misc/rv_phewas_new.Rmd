@@ -1,0 +1,353 @@
+---
+title: "UKB RAP PheWAS"
+output: html_notebook
+---
+
+PheWAS analysis
+
+Load in packages
+```{r}
+# library(devtools)
+# devtools::install_github("PheWAS/PheWAS")
+# library(PheWAS)
+library(tools)
+library(dplyr)
+library(readr)
+library(parallel)
+library(splines)
+library(doParallel)
+library(logistf)
+library(bigmemory) # sudo apt-get -y install uuid-dev # (to install)
+library(biganalytics)
+library(doSNOW)
+```
+
+# Main functions
+```{r}
+source('var.breakdown2.R')
+source('phewas_functions.R')
+```
+
+Gene-level synthetic alleles from bonf-sig variants in each gene
+```{r}
+v.samhd1 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr20.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr20/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                                t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                                gene='SAMHD1'), 
+                                 level='bonf', include_lt6=T)
+v.twnk <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr10.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr10/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+                                              t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+                                                gene='TWNK'), 
+                                 level='bonf', include_lt6=T)
+v.tfam <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr10.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr10/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+                                              t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+                                                gene='TFAM'), 
+                                 level='bonf', include_lt6=T)
+v.jak2 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr9.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr9/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr9.RData'),
+                                              t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr9.RData'),
+                                                gene='JAK2'),
+                                 level='bonf', include_lt6=T)
+v.ly75.cd302 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr2.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr2/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'),
+                                                t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'),
+                                                gene='LY75.CD302'), 
+                                 level='bonf', include_lt6=T)
+v.clpx <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr15.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr15/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr15.RData'),
+                                              t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr15.RData'),
+                                                gene='CLPX'), 
+                                 level='bonf', include_lt6=T)
+v.ak2 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr1.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr1/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr1.RData'),
+                                             t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr1.RData'),
+                                                gene='AK2'), 
+                                 level='bonf', include_lt6=T)
+v.mgme1 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr20.gds'), 
+                                                # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr20/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                               t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                                gene='MGME1'), 
+                                 level='bonf', include_lt6=T)
+
+v.CHEK2 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr22.gds'), 
+                                               # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr20/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                               t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr22.RData'),
+                                               gene='CHEK2'), 
+                                level='bonf', include_lt6=T)
+
+v.CAVIN2 <- get.synthetic_allele(var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr2.gds'), 
+                                               # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr20/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+                                               t= getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'),
+                                               gene='CAVIN2'), 
+                                level='bonf', include_lt6=T)
+```
+
+Individual gene-specific synthetic allele pheWAS
+```{r}
+# SAMHD1
+var.carriers <- v.samhd1$syn.allele %>% filter(syn.allele !=0)
+# data <- create_phewas_data.input(var.carriers)
+data <- create_phewas_data.input(var.carriers, subset.to.unrelated=F, subset.to.white.British.ancestry=F)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 1,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.SAMHD1.bonf_level.syn_allele.n415k.txt'
+  )
+# n314k results for SAMHD1 phecode 174:
+# phecode beta    SE      chisq   OR      p       n.cases n.var.cases     n.controls      n.var.controls  case.ctrl_ratio firth_correct
+# 174     0.615945868068695       0.141092465401337       19.058005498715 1.85140695834764        1.26804706931383e-05    13443   NA      294494  NA      0.0456477890890816      TRUE
+# 174.1   0.598300725719899       0.142830772325995       17.5467015853197        1.8190251500024 2.80336654794322e-05    13236   NA      149297  NA      0.0886554987709063      TRUE
+# 174.11  0.606661347159473       0.146006157050269       17.2643530970079        1.83429708313754        3.25231376966384e-05    12549   NA      149297  NA      0.0840539327648915      TRUE
+# n415k results for SAMHD1 phecode 174:
+# phecode beta    SE      chisq   OR      p       n.cases n.var.cases     n.controls      n.var.controls  case.ctrl_ratio firth_correct
+# 174.11  0.55533591008215        0.129352867571892       18.4314453643221        1.74252621860084        1.76127399144077e-05    17904   NA      218486  NA      0.0819457539613522      TRUE
+# 174.1   0.549669411541814       0.12640612341652        18.9089282479598        1.73268011912664        1.37109474115382e-05    18910   NA      218486  NA      0.0865501679741494      TRUE
+# 174     0.560212767726841       0.125087167548016       20.0576702872248        1.75104502653381        7.51415453004167e-06    19208   NA      426330  NA      0.0450543006591138      TRUE
+
+# TWNK
+var.carriers <- v.twnk$syn.allele %>% filter(syn.allele !=0)
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = sex.check,
+    data_desc = data_desc,
+    ncores = 3,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.TWNK.bonf_level.syn_allele.txt'
+  )
+
+# TFAM
+var.carriers <- v.tfam$syn.allele %>% filter(syn.allele !=0)
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = sex.check,
+    data_desc = data_desc,
+    ncores = 3,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.TFAM.bonf_level.syn_allele.txt'
+  )
+
+# CLPX
+var.carriers <- v.clpx$syn.allele %>% filter(syn.allele !=0)
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 5,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.CLPX.bonf_level.syn_allele.txt'
+  )
+
+# LY75/LY75.CD302
+var.carriers <- v.ly75.cd302$syn.allele %>% filter(syn.allele !=0)
+# data <- create_phewas_data.input(var.carriers)
+data <- create_phewas_data.input(var.carriers, subset.to.unrelated=F, subset.to.white.British.ancestry=F)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 1,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.LY75_CD302.bonf_level.syn_allele.n415k.txt'
+  )
+# in 314k british, unrelated subset, 716.8 close to cutoff of (1530 * 8 genes mult. tests)
+# phecode beta    SE      chisq   OR      p       n.cases n.var.cases     n.controls      n.var.controls  case.ctrl_ratio firth_correct
+# 716.8   3.22673682492621        0.819613810760308       15.4991740528169        25.1972994710125        8.25413125642438e-05    32      NA      274050  NA      0.000116767013318737    TRUE
+# but, when looking at 415k, not close anymore
+# phecode beta    SE      chisq   OR      p       n.cases n.var.cases     n.controls      n.var.controls  case.ctrl_ratio firth_correct
+# 716.8   2.99035896713966        0.799796134667289       13.979384422382 19.8928220794909        0.000184826123016513    40      NA      396840  NA      0.000100796290696502    TRUE
+
+# AK2
+var.carriers <- v.ak2$syn.allele %>% filter(syn.allele !=0)
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 5,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.AK2.bonf_level.syn_allele.txt'
+  )
+
+# MGME1
+var.carriers <- v.mgme1$syn.allele %>% filter(syn.allele !=0)
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 15,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.MGME1.bonf_level.syn_allele.txt'
+  )
+```
+
+Combined syn allele of bonf-sig vars
+```{r}
+v <- v.samhd1$alleles %>%
+  left_join(v.twnk$alleles, by='sample.id') %>% 
+  left_join(v.tfam$alleles, by='sample.id') %>% 
+  left_join(v.jak2$alleles, by='sample.id') %>%
+  left_join(v.ly75.cd302$alleles, by='sample.id') %>%
+  left_join(v.clpx$alleles, by='sample.id') %>%
+  left_join(v.ak2$alleles, by='sample.id') %>%
+  left_join(v.mgme1$alleles, by='sample.id')
+v$syn.allele <- apply(v[,2:ncol(v)], 1, function(x) ifelse(any(x!=0, na.rm=T), 1, 0))
+n.carriers <- apply(v[,2:(ncol(v)-1)], 1, sum)
+table(n.carriers)
+var.carriers <- v %>% filter(syn.allele==1) %>% select(IID=sample.id, syn.allele)
+
+data <- create_phewas_data.input(var.carriers)
+phecodes = data[[3]]
+both_sexes=data[[2]]
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 15,
+    var = 'var',
+    var.is_factor=TRUE, # when binary syn allele, set var.is_factor=T
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.all.bonf_level_alleles.syn_allele.no_JAK2.txt'
+  )
+
+```
+
+Rare variant score
+Effect sizes +/- 0.3 only
+```{r}
+v <- v.samhd1$scored.alleles %>%
+  left_join(v.twnk$scored.alleles, by='sample.id') %>% 
+  left_join(v.tfam$scored.alleles, by='sample.id') %>% 
+  left_join(v.jak2$scored.alleles, by='sample.id') %>%
+  left_join(v.ly75.cd302$scored.alleles, by='sample.id') # %>%
+  # left_join(v.clpx$scored.alleles, by='sample.id') %>%
+  # left_join(v.ak2$scored.alleles, by='sample.id') %>%
+  # left_join(v.mgme1$scored.alleles, by='sample.id') %>% 
+  # left_join(v.CAVIN2$scored.alleles, by='sample.id')
+
+# downselect to those alleles with effect size > +/- 0.3
+es_0.3_vars <- c('var.330053.pos.20_36893060_mac_304',
+                 'var.330419.pos.20_36905431_mac_104',
+                 'var.330977.pos.20_36930783_mac_197',
+                 'var.768340.pos.10_100990873_mac_11',
+                 'var.768362.pos.10_100990943_mac_6',
+                 'var.768474.pos.10_100993257_mac_48',
+                 'var.361598.pos.10_58388676_mac_320',
+                 'var.361871.pos.10_58394946_mac_81',
+                 'var.44367.pos.9_5073770_mac_284', # Jak2
+                 'var.1141606.pos.2_159854509_mac_8',
+                 'mac_lt_6.y') # should this be included?
+# create weighted score
+v <- v %>% select(sample.id, all_of(es_0.3_vars))
+v$scored.allele <- apply(v[,2:ncol(v)], 1, sum, na.rm=T) # non absolute-value
+# v$scored.allele <- abs(apply(v[,2:ncol(v)], 1, sum, na.rm=T)) # absolute-value
+var.carriers <- v %>% select(IID=sample.id, scored.allele) %>% filter(scored.allele!=0)
+
+data <- create_phewas_data.input2(var.carriers)
+
+# data <- create_phewas_data.input2(var.carriers)
+phecodes = data[[3]]
+sex.check=data[[2]]
+length(phecodes)
+
+## Create a bigmatrix object from `data`
+require(bigmemory)
+require(biganalytics)
+data <- data[[1]]
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+
+phewas <- # parallel rv score GLM
+  process.glm2_rvscore(
+    phecodes = sample(phecodes),
+    both_sexes = both_sexes,
+    data_desc = data_desc,
+    ncores = 15,
+    var = 'var',
+    var.is_factor = F, # Set to false to indicate predictor is a quant variable
+    back_correct_FirthSE = TRUE,
+    file.conn = './phewas_results.rvscore_es0.3.glm2_wTFAM_mac_lt_6_wJAK2.txt'
+  )
+```
+
+
+
+
+
+

@@ -1,0 +1,162 @@
+---
+title: "Mito Rare Variant Paper Table-1A"
+author: "Vamsee Pillalamarri"
+date: "2022-09-12"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+library(hrbrthemes)
+library(stargazer)
+library(gt)
+library(vroom)
+library(qvalue)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(genpwr)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+MAC.cutoff=6
+res.dir='/Users/vkp/projects/mito_rare-variant/resources/results/single_var/'
+
+```
+## Helper Functions
+```{r}
+# Calculate lambda (measure of genomic inflation) from p-values
+lambda <- function(pvals, info = F) {
+  # # Print #INFO for entering function
+  # self.aware(parent.name = parent(nf), info=info)
+  chisq <- qchisq(1 - pvals, 1)
+  return(median(chisq)/qchisq(0.5,1))
+}
+
+# genomic control (standard)
+gc <- function(pvals, info = F){
+  # # Print #INFO for entering function
+  # self.aware(parent.name = parent(nf), info=info)
+  l <- lambda(pvals)
+  message('Lambda is: ', l)
+  pvals.gc <- pvals / sqrt(l)
+  message('sqrt Lambda is: ', sqrt(l))
+  return(pvals.gc)
+  # Note: see https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5273857/
+}
+```
+
+```{r}
+N=414665
+# Non inverse rank-normalized phenotype
+res.nonint <- vroom(paste0(res.dir,'bolt.lmm_n450k_exomes.chr1-22.adjustedforGWA_SNPs.mtDNA_CN_m2_nonINT.stats.gz'), progress=F)
+res.nonint <- res.nonint %>% mutate(MAC=(A1FREQ*N)*2)
+res.nonint <- res.nonint %>% filter(MAC >= MAC.cutoff)
+res.nonint <- res.nonint %>% mutate(bonf.sig=ifelse(P_BOLT_LMM <= (0.05 / nrow(res.nonint)),TRUE,FALSE))
+res.nonint <- res.nonint %>% mutate(BETA.dir=ifelse(BETA>0,'+','-'))
+qobj <- qvalue(res.nonint$P_BOLT_LMM)
+res.nonint$qvalue <- qobj$qvalues
+res.nonint$fdr.sig <- qobj$significant
+
+```
+
+#### Experiment Wide Significant hits
+```{r}
+res <- res.nonint
+bonf.cutoff = (0.05 / nrow(res))
+
+# table of genes (with bonf annotated)
+res.expsig <- res %>% arrange(P_BOLT_LMM) %>% filter(P_BOLT_LMM <= bonf.cutoff) %>% 
+  dplyr::select(SNP,CHR,BP,ALLELE1,ALLELE0,A1FREQ,BETA,SE,MAC,bonf.sig,P_BOLT_LMM,qvalue)
+
+
+res.expsig$SE <- as.numeric(res.expsig$SE)
+
+# add genes (manual lookup since only 11)
+res.expsig$`Gene(s)` <- c('SAMHD1','SIRPA','SPAG4','JAK2','TWNK','TOP3A','ACSL1','SAMHD1','AHCY','PM20D1','AFAP1L1')
+
+res.expsig <- res.expsig %>% dplyr::select(-bonf.sig)
+
+res.expsig <- res.expsig %>% dplyr::select(SNP, CHR, BP, ALLELE0, ALLELE1,
+                                    BETA, SE, MAC, P_BOLT_LMM, qvalue,
+                                    `Gene(s)`)
+
+# Compute proportion variance explained
+# equation maf_ <- 2*(beta^2)*(maf*(1-maf)); se2 <- (se^2)*(2*N)*(maf*(1-maf))
+# pve = maf_ / (maf_ + se2)
+# alternatively, simplifying original equation gives beta^2 / (beta^2 + se^2 * N)
+# source for all of this is /Users/vkp/projects/mito_rare-variant/PVE_Calculation_pone.0120758.s001.pdf
+res.expsig$pve <- (res.expsig$BETA^2) / (res.expsig$BETA^2 + res.expsig$SE^2 * 414665)
+
+# Set PVE for SPAG4 to NA (it's in linkage disequilibrium with SAMHD1)
+res.expsig$pve[which(res.expsig$`Gene(s)`=='SPAG4')] <- NA
+
+res.expsig$func <- c('p.Asp585Asn',
+                     'Intronic variant',
+                     'Intronic variant',
+                     'p.Val617Ile',
+                     'p.Arg601Gln',
+                     'Intronic variant',
+                     'Intronic variant',
+                     'p.Arg531Ser',
+                     '3 \' UTR variant',
+                     'Intronic variant',
+                     'Intronic variant')
+
+
+t1a_gt <- res.expsig %>% arrange(P_BOLT_LMM) %>% gt() %>%
+  fmt_scientific(columns = c('P_BOLT_LMM', 'qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('BETA','SE'),decimals=2, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('MAC'),decimals=0, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('BP'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('pve'), decimals=3) %>% 
+  cols_hide(columns = 'SNP') %>% 
+  cols_move(columns = 'pve', after = 'func') %>% 
+  # cols_merge_uncert(col_val=BETA, col_uncert = SE) %>% 
+  cols_label(CHR='Chromosome',
+             BP='Position (bp)',
+             ALLELE1='Effect Allele',
+             ALLELE0='Reference Allele',
+             BETA='Effect Size',
+             SE='Standard Error',
+             MAC='Minor Allele Count',
+             P_BOLT_LMM='P-value',
+             qvalue='Q-value',
+             `Gene(s)`='Locus / Gene',
+             pve='Proportion Variance Explained',
+             func='Functional Effect') %>%
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c(`Gene(s)`))) %>% 
+  tab_style(
+    style = list(cell_text(color = "red")),
+    locations = cells_body(columns = c('BETA'),
+                           rows = BETA < 0)) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  cols_align(align='left', columns = c(BP, pve)) %>%
+  cols_align(align='center', columns = c(CHR)) %>%
+  tab_footnote(footnote = 'Effect sizes and standard errors are in units of 
+               standard deviation of the scaled mtDNA-CN distribution (mean = 0, std. dev. = 1)',
+               locations = cells_column_labels(columns = c('BETA','SE'))) %>% 
+  tab_footnote(footnote = 'Genome coordinates reported in GRCh38',
+               locations = cells_column_labels(columns = 'BP')) %>% 
+  tab_footnote(footnote = md('Variants present in a shared set of 262 individuals, as part of a rare, shared ancestral haplotype. _SPAG4_ in linkage disequilibrium with _SAMHD1_.'),
+               locations = list(cells_body(columns = c('BP'),
+                                      rows = BP == '36893060'),
+                                cells_body(columns = c('BP'),
+                                      rows = BP == '35619007'),
+                                cells_body(columns = c('pve'),
+                                      rows = `Gene(s)` == 'SPAG4'))) %>% 
+  tab_footnote(footnote = 'Proportion of variance (PVE) in mtDNA-CN explained by variant, computed as PVE = Effect-Size^2 / (Effect-Size^2 + Std.-Error^2 * Sample-Size) (n=414665)',
+               locations = cells_column_labels(columns = 'pve')) %>% 
+  opt_footnote_marks(marks = 'letters') %>% 
+  grand_summary_rows(columns = pve, fns = list(Total = ~sum(., na.rm=T)),
+                     formatter = fmt_percent, decimals = 3) 
+
+t1a_html <- t1a_gt %>% gt::as_raw_html()
+t1a_html %>% write_lines('~/mito_rare-variant/analyses/Table_1A.html')
+t1a_gt # Display table
+```

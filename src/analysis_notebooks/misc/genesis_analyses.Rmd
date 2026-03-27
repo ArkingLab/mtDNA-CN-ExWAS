@@ -1,0 +1,295 @@
+---
+title: "Genesis Aggregate Burden Analyses"
+output:
+  html_document: 
+    df_print: kable
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+---
+Aggregate burden association analysis tests in UKBiobank for mitochondrial copy number.
+
+This closely follows the analysis as described in the GENESIS vignette:
+https://www.bioconductor.org/packages/devel/bioc/vignettes/GENESIS/inst/doc/assoc_test_seq.html
+# Setup
+```{r, setup,echo=TRUE,results='hide'}
+root_dir = '/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/'
+knitr::opts_knit$set(root.dir = root_dir)
+knitr::opts_chunk$set(echo = F, results = 'hide')
+
+library(dplyr)
+library(readr)
+library(stringr)
+library(GENESIS)
+library(TopmedPipeline)
+library(Biobase)
+library(SeqArray)
+library(SeqVarTools)
+# library(SNPRelate)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+```
+# Preprocess
+## Convert UKBiobank Plink files --> `SeqArray::GDS`  
+Shell script `runSeqBED2GDS` converts Plink binary fileset (BED) for each chromosome --> GDS. 
+Sh in turn calls `ukb_plinkBED2gds.R` that performs the actual task using `SeqArray::seqBED2GDS()`
+```{bash eval=FALSE}
+scripts=/dcs01/arking/arkinglab/active/projects/mito_rare-variant/scripts
+qsub -cwd -t 1-24 -l h_fsize=80G,mem_free=2G,h_vmem=2G ${scripts}/run_seqBED2GDS.sh
+```
+## Merge individual chromosome GDS to single merged gds. Run once.
+```{r eval=FALSE}
+runonce=T # ran once
+if(!runonce) {
+  dir="/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds"
+  gds.fn <- list.files(path=dir, pattern='.gds', full.names=T)
+  SeqArray::seqMerge(gds.fn = gds.fn, out.fn = 'UKBexomeQQFE_chr1-24.gds', verbose = T)
+}
+```
+## Read in genotypes from merged gds format
+```{r}
+# Genotypes
+dir="/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/"
+gds <- seqOpen(paste0(dir,'UKBexomeQQFE_chr1-24.gds'))
+```
+## Read in covariates, create AnnotatedDataFrame, attach to merged gds
+```{r results='hide',message=FALSE}
+# mtDNA CN phenotype data
+mt.cn <-
+  read_tsv(
+    '/dcs01/arking/arkinglab/active/projects/mito_rare-variant/resources/200k_wes.lmm.pheno.txt',
+    col_names = T
+  )
+# covariates (wes.batch)
+covar_wes.batch <-
+  read_tsv(
+    '/dcs01/arking/arkinglab/active/projects/mito_rare-variant/resources/200k_wes.lmm.covar.txt',
+    col_names = T
+  )
+# other covariates (age, sex)
+covar_age_sex <-
+  read_tsv(
+    '/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/covar/n180256.age_sex.covar.txt',
+    col_names=T
+  )
+# pcs 1-40 #10
+covar_pcs <-
+  read_tsv(
+    # '/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/covar/ukb_sample_qc.pcs1-10.n180256.txt',
+    '/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/covar/ukb_sample_qc.pcs1-40.n180256.txt',
+    col_names=T
+  )
+# final covariates
+covar <- covar_age_sex %>%
+  inner_join(covar_pcs, by='IID') %>%
+  inner_join(covar_wes.batch, by='IID') %>%
+  dplyr::select(-FID.x,-FID.y) %>%
+  dplyr::select(-starts_with('SNP_'))
+# nonwhites
+nonwhites <-
+  read_tsv(
+    '/dcs01/arking/arkinglab/active/projects/mito_rare-variant/resources/ukb_nonwhites.txt',
+    col_names = T
+  )
+
+# Create AnnotatedDataFrame with metadata
+# NOTE: `SeqVarTools::SeqVarData()` does a very strict identity check 
+# using `identical()` - hence, annot$sample.id and gds$sample.id vectors
+# need to be same class -- specifically, since sample.ids are represented 
+# as.integer in the gds, annot$sample.id should also be as.integer
+annot <- tibble(IID=seqGetData(gds,"sample.id")) %>%
+  left_join(mt.cn, by='IID') %>%
+  left_join(covar, by='IID') %>%
+#   left_join(unrelateds, by='IID') %>% 
+  # dplyr::select('sample.id'='IID','mtDNA_CN','age','sex',paste0('PC',1:10,sep=''),'wes.batch')
+  dplyr::select('sample.id'='IID','mtDNA_CN','age','sex',paste0('PC',1:40,sep=''),'wes.batch')
+annot$sample.id <- as.integer(annot$sample.id) 
+
+# metadata to describe columns
+metadata <- data.frame(labelDescription=c("IID (as.integer)",
+                                          "mtDNA_CN (Units are standard deviation)",
+                                          'Age',
+                                          'Sex',
+                                          # paste0('PC',1:10,sep=''),
+                                          paste0('PC',1:40,sep=''),
+                                          "WES Batch Number (1=50k, 2=Remaining Samples)"),
+                       row.names=names(annot),
+                       stringsAsFactors = F)
+annot <- AnnotatedDataFrame(as.data.frame(annot), metadata)
+save(list='annot', file='/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/n200643.all_samples.AnnotatedDataFrame.RData')
+     
+# add AnnotatedDataFrame to gds
+stopifnot(identical(annot$sample.id, seqGetData(gds, "sample.id")))
+seqData <- SeqVarData(gds, sampleData=annot)
+```
+# Subset GDS
+## Create SAMPLE filters
+```{r}
+# pare sample set to remove excluded individuals
+# sample exclusions:
+#   non-consented individuals (-12), without mtDNA_CN pheno (-), and non-whites (-)
+samples <- seqGetData(gds, 'sample.id')
+keep.samples <-
+  tibble(IID=samples) %>%
+  inner_join(mt.cn, by='IID') %>%
+  dplyr::filter(!is.na(mtDNA_CN)) %>%
+  # select(-FID) %>%
+  anti_join(nonwhites, by='IID') %>%
+  inner_join(unrelateds, by='IID') %>%  # since we're not using mixed-model w/ GENESIS
+  inner_join(covar, by='IID') %>%
+  #select(FID, IID, mtDNA_CN, wes.batch)
+  dplyr::select(IID, mtDNA_CN) %>%
+  inner_join(covar, by='IID') # attach covariates for subset
+
+# write to file (for PLINK)
+runonce=TRUE
+if(!runonce){
+  keep.samples %>% select(FID, IID) %>%
+  write_tsv('/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/n180256.keep.IIDs', col_names = F)
+}
+
+# Create new AnnotatedDataFrame for filtered samples
+keep.samples_annot <-
+  #keep.samples %>% select('sample.id' = 'IID', 'mtDNA_CN', 'wes.batch') %>%
+  # keep.samples %>% select('sample.id'='IID','mtDNA_CN','age','sex',paste0('PC',1:10,sep=''),'wes.batch') %>%
+  keep.samples %>% dplyr::select('sample.id'='IID','mtDNA_CN','age','sex',paste0('PC',1:40,sep=''),'wes.batch') %>%
+  mutate(Population=rep('EA', nrow(keep.samples))) %>%
+  mutate(Population.Description=rep('European Ancestry', nrow(keep.samples)))
+keep.samples_annot$sample.id <- as.integer(keep.samples_annot$sample.id)
+metadata <- data.frame(labelDescription=c("IID (as.integer)",
+                                          "mtDNA_CN (Units are standard deviation)",
+                                          'Age',
+                                          'Sex',
+                                          # paste0('PC',1:10,sep=''),
+                                          paste0('PC',1:40,sep=''),
+                                          "WES Batch Number (1=50k, 2=Remaining Samples)",
+                                          "Population",
+                                          "Population Description"),
+                       row.names=names(keep.samples_annot),
+                       stringsAsFactors = F)
+
+
+# Inverse Rank Normalize mtDNA CN
+library(RNOmni)
+keep.samples_annot$mtDNA_CN <- RNOmni::RankNorm(keep.samples_annot$mtDNA_CN)
+
+# Create new sample subset's AnnotatedDataFrame
+annot <- keep.samples_annot <- Biobase::AnnotatedDataFrame(as.data.frame(keep.samples_annot), metadata)
+dir='/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/'
+# save(list='annot', file=paste0(dir,'/n180256.keep_samples.AnnotatedDataFrame.RData'))
+save(list='annot', file=paste0(dir,'/n176064.keep_samples.AnnotatedDataFrame.RData'))
+```
+## Create VARIANT filters
+(Try) Use `SNPRelate::snpgdsLDpruning` for pruning SNPs from gds
+```{r}
+# LD pruning to get variant set 
+# (VERY SLOW) -- see below
+# snpset <- snpgdsLDpruning(gds, method="corr", slide.max.bp=10e6, 
+#                          ld.threshold=sqrt(0.1), verbose=TRUE, num.thread = 1, 
+#                          maf = 0.1, missing.rate = 0.05)
+# pruned <- unlist(snpset, use.names=FALSE)
+```
+(Alternate) use Plink for ld-pruning
+Use PLINK to output ld-pruned variants (fast) --> list of pruned SNVs
+```{r}
+# get list of variants from gds as chr_pos_allele format
+# convert to chr:pos:A0:A1 format
+t <- seqGetData(gds, '$chrom_pos_allele')
+t <- str_replace_all(string = t, pattern = '_', replacement = ':')
+# read in list of pruned SNVs (from plink) and match to get indices
+x <- readLines('/dcl01/arking/data/static/UKBiobank/WES/plink/pruned/chr1-24.prune.in.snpIDs.SNVonly.list')
+var.idx <- which(t %in% x)
+pruned <- var.idx # pruned SNP list
+```
+## Apply Sample + Variant filters -> Export subset gds
+```{r eval=FALSE}
+runonce=TRUE
+if(!runonce) {
+  dir="/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/"
+  # filter samples and variants
+  gds.sub <- gds
+  seqSetFilter(
+    gds.sub,
+    sample.sel = which(samples %in% keep.samples$IID),
+    variant.sel = pruned
+  )
+  # attach AnnotatedDatFrame for samples subset, then save
+  seqData <- SeqVarData(gds.sub, sampleData=keep.samples_annot)
+  seqExport(
+    gds.sub,
+    #paste0(dir, '/UKBexomeQQFE_chr1-24.ld_pruned.gds'),
+    paste0(dir, '/UKBexomeQQFE_chr1-24.keep.samples.gds'),
+    fmt.var = character(),
+    info.var = character()
+  )
+  
+  gds.sub <- seqOpen(paste0(dir, 'UKBexomeQQFE_chr1-24.ld_pruned.gds'))
+  stopifnot(identical(annot$sample.id, seqGetData(gds.sub, "sample.id")))
+  seqData <- SeqVarData(gds.sub, sampleData = keep.samples_annot)
+}
+```
+## KING (optional -- doesn't work)
+```{r}
+king <- snpgdsIBDKING(gds.sub, snp.id=pruned, verbose=TRUE, num.thread = 1)
+kingMat <- king$kinship
+dimnames(kingMat) <- list(king$sample.id, king$sample.id)
+```
+# Association Testing
+## Prep assoc testing
+```{r}
+# Set keep samples filter on gds
+dir="/dcs04/arking/data/active/projects/mito_rare-variant/burden/genesis/gds/"
+k <- getobj(paste0(dir,'n180259.keep_samples.AnnotatedDataFrame.RData'))
+samples <- seqGetData(gds, 'sample.id')
+seqSetFilter(gds, sample.sel = which(samples %in% k@data$sample.id))
+
+# null model - fixed effects (note: grm not provided)
+outcome='mtDNA_CN'
+covars=c('wes.batch')
+nullmod.fe <- fitNullModel(x=k, outcome=outcome, covars=covars, verbose=T)
+
+# Select chromosome (1-22,23=X,24=Y)
+chr=1
+seqSetFilterChrom(seqData, include=chr)
+```
+
+## Single variant testing
+```{r}
+# single variant assoc using block iterator
+iterator <- SeqVarBlockIterator(seqData, verbose=T)
+assoc <- assocTestSingle(iterator, nullmod, verbose=T)
+```
+## Rare variant aggregate burden association testing
+```{r}
+# library(GenomicRanges)
+# library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+
+gr <- granges(gds)
+
+# find variants that overlap with each gene
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+gr <- renameSeqlevels(gr, paste0("chr", seqlevels(gr)))
+ts <- transcriptsByOverlaps(txdb, gr, columns="GENEID")
+# simplistic example - define genes as overlapping transcripts
+genes <- reduce(ts)
+genes <- renameSeqlevels(genes, sub("chr", "", seqlevels(genes)))
+
+# create an iterator where each successive unit is a different gene
+iterator <- SeqVarRangeIterator(seqData, variantRanges=genes, verbose=T)
+
+# do a burden test on the rare variants in each gene
+assoc <- assocTestAggregate(iterator, nullmod.fe, AF.max=0.05, test="Burden",verbose=T)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

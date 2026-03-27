@@ -1,0 +1,638 @@
+---
+title: "Phewas analysis of rare variants"
+output: html_notebook
+---
+
+# TODO:
+- use a synthetic allele to capture both MAC < 6 and MAC >=6 variants in a given gene (SAMHD1, TWNK, TFAM, SLC25A37) and test for association with phecodes, or
+- use Fisher’s method to combine logistf p-values (i.e. Firth corrected p-values) from MAC < 6 and MAC >=6 for final p-value
+- alternatively, back calculate the correct firth SE, then use the beta and corrected SE to run meta-analysis
+
+```{r}
+library(PheWAS)
+library(poolr)
+```
+
+# glm() for phewas
+```{r}
+process.glm <- function(phecodes, data, sex_check, ncores=1, gene=NULL, var=NULL) {
+  #require(logistf)
+  require(doParallel)
+  require(parallel)
+  require(splines)
+
+  doParallel::registerDoParallel(ncores)
+  
+  x <- foreach(i = 1:length(phecodes), .errorhandling = 'pass') %dopar% {
+    phecode <- phecodes[i]
+    if(!sex_check[as.character(phecode)]){
+      # formula=paste0('`',phecode,'`',' ~ ', gene, '.carrier + age + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+      formula=paste0('`',phecode,'`',' ~ ', var, ' + ns(age,df=2) + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+    } else {
+      # formula=paste0('`',phecode,'`',' ~ ', gene, '.carrier + age + sex + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+      formula=paste0('`',phecode,'`',' ~ ', var, ' + ns(age, df=2) + sex + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+    }
+    message(formula)
+    fit <-
+      glm(
+        formula,
+        data,
+        family='binomial'
+      )
+    
+    # extract values from glm model -> return
+    val <- rep(NA, 4)
+    names(val) <- c('beta','SE','OR','p')
+    val['beta'] <- coef(fit)[2]
+    val['SE'] <- summary(fit)$coef[2,2]
+    val['OR'] <- exp(coef(fit)[2])
+    val['p'] <- summary(fit)$coef[2,4]
+    #val <- data.frame(phecode, val)
+    return(val)
+  }
+  
+  doParallel::stopImplicitCluster()
+  x <- bind_rows(x) %>% as_tibble()
+  x <- cbind(tibble(phecode=phecodes), x)
+  return(as_tibble(x))
+}
+```
+
+```{r}
+x.mac_all2 <- process.glm(phecodes=s$phecode, data=data, sex_check=sex.check, ncores=15, var='mac_all2')
+x.twnk_tfam.carrier <- process.glm(phecodes=s$phecode, data=data, sex_check=sex.check, ncores=15, var='twnk_tfam.carrier')
+x.samhd1_slc25a37.carrier <- process.glm(phecodes=s$phecode, data=data, sex_check=sex.check, ncores=15, var='samhd1_slc25a37.carrier')
+x.mac_all <- process.glm(phecodes=s$phecode, data=data, sex_check=sex.check, ncores=15, var='mac_all')
+print('done')
+```
+
+
+# firth correction implementation for phewas
+```{r}
+process.firth <- function(s, data, sex_check, ncores=1, gene=NULL) {
+  require(logistf)
+  require(doParallel)
+  require(parallel)
+  require(doParallel)
+
+  doParallel::registerDoParallel(ncores)
+  
+  x <- foreach(i = 1:nrow(s), .packages='logistf', .errorhandling = 'pass') %dopar% {
+    phecode <- s$phecode[i]
+    if(!sex_check[as.character(phecode)]){
+      formula=paste0('`',phecode,'`',' ~ ', gene, '.carrier + age + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+    } else {
+      formula=paste0('`',phecode,'`',' ~ ', gene, '.carrier + age + sex + wes.batch + Center + ', paste0('PC',1:40,separate='',collapse='+'))
+    }
+    message(formula)
+    fit.firth <-
+      logistf(
+        formula,
+        data,
+        control = logistf.control(maxit = 100, maxstep = 50),
+        plcontrol = logistpl.control(maxit = 400, maxstep = 20),
+        plconf = c(2),
+        model=F
+      )
+    
+    # extract values from firth model -> return
+    val <- rep(NA, 5)
+    names(val) <- c('beta','SE','OR','chisq','p')
+    val['beta'] <- fit.firth$coefficients[2]
+    val['OR'] <- exp(fit.firth$coefficients[2])
+    val['SE'] <- sqrt(diag(vcov(fit.firth))[2])
+    val['chisq'] <- qchisq(1-fit.firth$prob,df=1)[2]
+    val['p'] <- fit.firth$prob[2]
+    return(val)
+  }
+  
+  doParallel::stopImplicitCluster()
+  return(x)
+}
+```
+
+
+## run rv phecode-based phewas
+```{r}
+unrel <- read_tsv('~/mtrv/burden/genesis/gds/n176064.unrelated.plink.to_keep.IIDs', 
+                  col_names=c('id'))
+k <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n180256.keep_samples.AnnotatedDataFrame.RData')
+k <- as_tibble(k@data)
+k <- k %>% select('sample.id', 'wes.batch')
+i <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n180256.icd10_codes_phecodes.rds')
+i <- i$icd10_phecodes
+ukb.dat <- TopmedPipeline::getobj('~/mtrv/burden/genesis/gds/n502485.ukb.data.rds')
+ukb.center <- TopmedPipeline::getobj('~/ukb/GWAS_data/pheno/ukb.center.rds')
+
+# SAMHD1 carriers
+samhd1.carrier <-
+  read.csv(
+    '~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_gteq_6',
+     # '~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_lt_6',
+    #'~/mtrv/phesant/samhd1.carriers/SAMHD1.carriers.mac_all',
+    col.names = c('id', 'SAMHD1.carrier')
+  ) %>% as_tibble()
+
+# TWNK carriers
+twnk.carrier <-
+  read.csv(
+    #'~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_gteq_6',
+    '~/mtrv/phesant/twnk.carriers/TWNK.carriers.mac_lt_6',
+    col.names = c('id', 'TWNK.carrier')
+  ) %>% as_tibble()
+
+# TFAM carriers
+tfam.carrier <-
+  read.csv(
+    #'~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_gteq_6',
+    '~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_lt_6',
+    col.names = c('id', 'TFAM.carrier')
+  ) %>% as_tibble()
+
+# SLC25A37 carriers
+slc25a37.carrier <-
+  read_tsv(
+    '~/mtrv/phesant/slc25a37.carriers//slc25a37.carriers.mac_gteq6',
+    #'~/mtrv/phesant/tfam.carriers/TFAM.carriers.mac_lt_6',
+    #col_names = c('id', 'SLC25A37.carrier')
+  ) %>% as_tibble()
+slc25a37.carrier <-
+  read_tsv(
+    #'~/mtrv/phesant/slc25a37.carriers//slc25a37.carriers.mac_gteq6',
+    '~/mtrv/phesant/slc25a37.carriers//slc25a37.carriers.mac_lt6',
+    #col_names = c('id', 'SLC25A37.carrier')
+  ) %>% as_tibble()
+
+
+# load in old results for getting passing phecodes
+s <- TopmedPipeline::getobj('~/mtrv/phesant/samhd1.carriers/phewas_results_samhd1_mac_gteq6.unrel.rds') %>%
+  as_tibble() %>% filter(!is.na(p))
+s <- TopmedPipeline::getobj('~/mtrv/phesant/twnk.carriers/phewas_results_twnk_mac_gteq6.unrel.rds') %>%
+  as_tibble() %>% filter(!is.na(p))
+s <- TopmedPipeline::getobj('~/mtrv/phesant/twnk.carriers/phewas_results_twnk_mac_lt6.unrel.rds') %>%
+  as_tibble() %>% filter(!is.na(p))
+s <- TopmedPipeline::getobj('~/mtrv/phesant/tfam.carriers/phewas_results_tfam_mac_gteq6.unrel.rds') %>%
+  as_tibble() %>% filter(!is.na(p))
+s <- TopmedPipeline::getobj('~/mtrv/phesant/tfam.carriers/phewas_results_tfam_mac_lt6.unrel.rds') %>%
+  as_tibble() %>% filter(!is.na(p))
+
+# join
+gene='SAMHD1'
+gene='TWNK'
+gene='TFAM'
+gene='slc25a37'
+data <- ukb.dat$ukb.data %>% 
+  inner_join(unrel, by='id') %>%
+  inner_join(i, by='id') %>% 
+  inner_join(k, by=c('id'='sample.id'), ) %>% 
+  inner_join(ukb.center, by=c('id'='IID')) %>% 
+#  inner_join(slc25a37.carrier, by='id') %>% 
+  inner_join(all.carriers, by='id') %>% 
+  # dplyr::select(id, all_of(paste0(gene, '.carrier')), age, sex, Center, wes.batch, 
+  #               all_of(paste0('PC',1:40,separate='')),
+  #               all_of(s$phecode))
+  dplyr::select(id, mac_all, mac_all2, mac_all3, twnk_tfam.carrier,samhd1_slc25a37.carrier, age, sex, Center, wes.batch,
+                all_of(paste0('PC',1:40,separate='')),
+                all_of(s$phecode))
+  
+data$Center <- as.factor(data$Center)
+data$sex <- as.factor(data$sex)
+data$wes.batch <- as.factor(data$wes.batch)
+data$twnk_tfam.carrier <- as.factor(data$twnk_tfam.carrier)
+data$samhd1_slc25a37.carrier <- as.factor(data$samhd1_slc25a37.carrier)
+#data$SAMHD1.carrier <- as.factor(data$SAMHD1.carrier)
+#data$slc25a37.carrier <- as.factor(data$slc25a37.carrier)
+data$age2 <- data$age^2
+rm(i)
+rm(k)
+rm(ukb.dat)
+rm(ukb.center)
+rm(unrel)
+
+#phewas using PheWAS package:
+# results_samhd1.carrier_mac_gteq6=phewas_ext(phenotypes=s$phenotype,genotypes='SAMHD1.carrier',
+#                                           data=data, cores=5,
+#                                           covariates=c('age','age2','sex','wes.batch',
+#                                                        'Center',paste0('PC',1:40,separate='')), 
+#                                           additive.genotypes=F)
+
+# Using custom custom function that runs glm():
+sex.check <-
+  apply(data %>% dplyr::select(all_of(s$phecode)), 2, function(x) {
+    ifelse(length(unique(data$sex[which(x)])) == 2, TRUE, FALSE)
+  })
+
+# count n_cases and filter on min cases = 20
+n.cases <- apply(data %>% dplyr::select(all_of(s$phecode)), 2, function(x) length(which(x)))
+n.controls <- apply(data %>% dplyr::select(all_of(s$phecode)), 2, function(x) length(which(x==FALSE)))
+case.ctrl_ratio <- n.cases / n.controls
+
+s.mac_all <- process.glm(phecodes=s$phenotype, data, sex.check, ncores=15, gene='TWNK')
+s.mac_all$n.cases <- n.cases[s.mac_all$phecode]
+s.mac_all$n.controls <- n.controls[s.mac_all$phecode]
+s.mac_all$case.ctrl_ratio <- case.ctrl_ratio[s.mac_all$phecode]
+phecode_def <- read_csv('~/mtrv/phesant/phecode_definitions1.2.csv')
+s.mac_all <- s.mac_all %>% inner_join(phecode_def, by='phecode')
+
+s.mac_gteq6 <- process.glm(phecodes=s$phecode, data, sex.check, ncores=15, gene='slc25a37')
+s.mac_gteq6$n.cases <- n.cases[s.mac_gteq6$phecode]
+s.mac_gteq6$n.controls <- n.controls[s.mac_gteq6$phecode]
+s.mac_gteq6$case.ctrl_ratio <- case.ctrl_ratio[s.mac_gteq6$phecode]
+phecode_def <- read_csv('~/mtrv/phesant/phecode_definitions1.2.csv')
+s.mac_gteq6 <- s.mac_gteq6 %>% inner_join(phecode_def, by='phecode')
+s.mac_gteq6_ <- s.mac_gteq6 %>% filter(p <= 0.05)
+x1 <- process.firth(s=s.mac_gteq6_, data=data, sex_check=sex.check, ncores=7, gene='TFAM')
+
+s.mac_lt6 <- process.glm(phecodes=s$phecode, data, sex.check, ncores=7, gene='slc25a37')
+s.mac_lt6$n.cases <- n.cases[s.mac_lt6$phecode]
+s.mac_lt6$n.controls <- n.controls[s.mac_lt6$phecode]
+s.mac_lt6$case.ctrl_ratio <- case.ctrl_ratio[s.mac_lt6$phecode]
+phecode_def <- read_csv('~/mtrv/phesant/phecode_definitions1.2.csv')
+s.mac_lt6 <- s.mac_lt6 %>% inner_join(phecode_def, by='phecode')
+s.mac_lt6_ <- s.mac_lt6 %>% filter(p <= 0.05)
+x2 <- process.firth(s=s.mac_lt6_, data=data, sex_check=sex.check, ncores=7, gene='TFAM')
+
+```
+
+Fisher's method to combine logistf p-values of MAC < 6 and MAC>=6 tests < 0.05
+```{r}
+# get superset of tests under p <= 0.05 from s1 and s2
+# s1 <- TopmedPipeline::getobj('~/mtrv/phesant/samhd1.carriers/phewas_results_samhd1_mac_gteq6.unrel.rds')
+# s2 <- TopmedPipeline::getobj('~/mtrv/phesant/samhd1.carriers/phewas_results_samhd1_mac_lt6.unrel.rds')
+s1 <- TopmedPipeline::getobj('~/mtrv/phesant/twnk.carriers/phewas_results_tnwk_mac_gteq6.unrel.rds') %>% as_tibble()
+s2 <- TopmedPipeline::getobj('~/mtrv/phesant/twnk.carriers/phewas_results_tnwk_mac_lt6.unrel.rds') %>% as_tibble()
+
+s1 <- TopmedPipeline::getobj('~/mtrv/phesant/tfam.carriers/phewas_results_tfam_mac_gteq6.unrel.rds') %>% as_tibble()
+s2 <- TopmedPipeline::getobj('~/mtrv/phesant/tfam.carriers/phewas_results_tfam_mac_lt6.unrel.rds') %>% as_tibble()
+
+s1 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tnwk_mac_gteq6.unrel.rds')
+s2 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tnwk_mac_lt6.unrel.rds')
+
+s1_ <- s1 %>% filter(p <= 0.05)
+s2_ <- s2 %>% filter(p <= 0.05)
+
+super.set.to_adjust <- c(s1_$phecode, s2_$phecode)
+s1 <- s1 %>% filter(phecode %in% super.set.to_adjust)
+s2 <- s2 %>% filter(phecode %in% super.set.to_adjust)
+s1$study <- 's1'
+s2$study <- 's2'
+
+# run, save
+#x1 <- process.firth(s=s1, data=data, sex_check=sex.check, ncores=10, gene='SAMHD1')
+#x2 <- process.firth(s=s2, data=data, sex_check=sex.check, ncores=10, gene='SAMHD1')
+
+case.ctrl_info <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n.cases.n.controls.rds')
+case.ctrl_info <- tibble(phecode=names(case.ctrl_info[[1]]), n.cases=case.ctrl_info[[1]], n.controls=case.ctrl_info[[2]], case.ctrl_ratio=case.ctrl_info[[3]]) %>% 
+  as_tibble()
+phecode_def <- read_csv('~/mito_rare-variant//resources//phecode_definitions1.2.csv')
+```
+
+```{r}
+# load
+x1.samhd1 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_gteq6.unrel.super.set.firth_corr.full.rds')
+x2.samhd1 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_lt6.unrel.super.set.firth_corr.full.rds')
+#back correct SE for slc25a37
+x1.samhd1$SE <-
+  abs(x1.samhd1$beta) / sqrt(x1.samhd1$chisq)
+x2.samhd1$SE <-
+  abs(x2.samhd1$beta) / sqrt(x2.samhd1$chisq)
+
+x1.twnk <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tnwk_mac_gteq6.unrel.super.set.firth_corr.rds')
+x2.twnk <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_twnk_mac_lt6.unrel.super.set.firth_corr.rds')
+#back correct SE for slc25a37
+x1.twnk$SE <-
+  abs(x1.twnk$beta) / sqrt(x1.twnk$chisq)
+x2.twnk$SE <-
+  abs(x2.twnk$beta) / sqrt(x2.twnk$chisq)
+
+x1.tfam <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tfam_mac_gteq6.unrel.super.set.firth_corr.rds')
+x2.tfam <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_tfam_mac_lt6.unrel.super.set.firth_corr.rds')
+#back correct SE for slc25a37
+x1.tfam$SE <-
+  abs(x1.tfam$beta) / sqrt(x1.tfam$chisq)
+x2.tfam$SE <-
+  abs(x2.tfam$beta) / sqrt(x2.tfam$chisq)
+
+x1.slc25a37 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_slc25a37_mac_gteq6.unrel.super.set.firth_corr.rds')
+x2.slc25a37 <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_slc25a37_mac_lt6.unrel.super.set.firth_corr.rds')
+#back correct SE for slc25a37
+x1.slc25a37$SE <-
+  abs(x1.slc25a37$beta) / sqrt(x1.slc25a37$chisq)
+x2.slc25a37$SE <-
+  abs(x2.slc25a37$beta) / sqrt(x2.slc25a37$chisq)
+# subset slc25a37 res to phecodes in super.set
+x1.slc25a37 <- x1.slc25a37 %>% filter(phecode %in% x1.samhd1$phecode)
+x2.slc25a37 <- x2.slc25a37 %>% filter(phecode %in% x2.samhd1$phecode)
+
+# combine each mac gteq6 and lt6 results into single gene dfs
+x.slc25a37 <- x1.slc25a37 %>% inner_join(x2.slc25a37, by='phecode') %>% arrange(phecode)
+x.samhd1 <- x1.samhd1 %>% inner_join(x2.samhd1, by='phecode') %>% arrange(phecode)
+x.twnk <- x1.twnk %>% inner_join(x2.twnk, by='phecode') %>% arrange(phecode)
+x.tfam <- x1.tfam %>% inner_join(x2.tfam, by='phecode') %>% arrange(phecode)
+```
+
+Process gene results after firth correction
+```{r}
+x <- x.slc25a37
+meta.res.df <- data.frame(phecode=rep('', nrow(x)),
+                       beta=rep(NA, nrow(x)),
+                       SE=rep(NA, nrow(x)),
+                       # p.mac_lt6=rep(NA, nrow(x)),
+                       # p.mac_gteq6=rep(NA, nrow(x)),
+                       pval.rand=rep(NA, nrow(x))) %>% as_tibble()
+for(i in 1:nrow(x)) {
+  mres <- metagen(TE=c(x$beta.x[i], x$beta.y[i]),
+                         seTE=c(x$SE.x[i], x$SE.y[i]))
+  meta.res.df$phecode[i] <- x$phecode[i]
+  meta.res.df$beta[i] <- mres$TE.random
+  meta.res.df$SE[i] <- mres$seTE.random
+  # meta.res.df$p.mac_gteq6[i] <- x1.slc25a37$p[which(x1.slc25a37$phecode==x$phecode[i])]
+  # meta.res.df$p.mac_lt6[i] <- x2.slc25a37$p[which(x1.slc25a37$phecode==x$phecode[i])]
+  meta.res.df$pval.rand[i] <- mres$pval.random
+}
+x.slc25a37 <- meta.res.df
+meta.res.df %>% 
+  arrange(pval.rand) %>% 
+  inner_join(phecode_def, by='phecode') %>% 
+  inner_join(case.ctrl_info, by='phecode') %>% 
+  select(phecode, beta, SE, p.mac_lt6, p.mac_gteq6, pval.rand, phenotype, n.cases, n.controls)
+```
+
+```{r}
+phecode='270.35'
+res <- metagen(TE=c(x.samhd1$beta.x[x.samhd1$phecode==phecode],
+             x.samhd1$beta.y[x.samhd1$phecode==phecode],
+             x.twnk$beta.x[x.twnk$phecode==phecode],
+             x.twnk$beta.y[x.twnk$phecode==phecode],
+             x.tfam$beta.x[x.tfam$phecode==phecode],
+             x.tfam$beta.y[x.tfam$phecode==phecode],
+             x.slc25a37$beta.x[x.slc25a37$phecode==phecode],
+             x.slc25a37$beta.y[x.slc25a37$phecode==phecode]),
+        seTE = c(x.samhd1$SE.x[x.samhd1$phecode==phecode],
+             x.samhd1$SE.y[x.samhd1$phecode==phecode],
+             x.twnk$SE.x[x.twnk$phecode==phecode],
+             x.twnk$SE.y[x.twnk$phecode==phecode],
+             x.tfam$SE.x[x.tfam$phecode==phecode],
+             x.tfam$SE.y[x.tfam$phecode==phecode],
+             x.slc25a37$SE.x[x.slc25a37$phecode==phecode],
+             x.slc25a37$SE.y[x.slc25a37$phecode==phecode]),
+        sm='OR')
+
+```
+
+Meta analysis of SAMHD1, TWNK, TFAM, SLC25A37
+```{r}
+common.phecodes <- Reduce(intersect, list(x.samhd1$phecode, x.twnk$phecode, x.tfam$phecode, x.slc25a37$phecode))
+meta.res.df <- data.frame(phecode=common.phecodes,
+                       beta=rep(NA, length(common.phecodes)),
+                       SE=rep(NA, length(common.phecodes)),
+                       pval.rand=rep(NA, length(common.phecodes)),
+                       OR.rand=rep(NA, length(common.phecodes)),
+                       # pval.fisher=rep(NA, length(common.phecodes)),
+                       # pval.stouffer=rep(NA, length(common.phecodes)),
+                       pval.samhd1_mac_gteq6=rep(NA, length(common.phecodes)),
+                       pval.samhd1_mac_lt6=rep(NA, length(common.phecodes)),
+                       pval.twnk_mac_gteq6=rep(NA, length(common.phecodes)),
+                       pval.twnk_mac_lt6=rep(NA, length(common.phecodes)),
+                       pval.tfam_mac_gteq6=rep(NA, length(common.phecodes)),
+                       pval.tfam_mac_lt6=rep(NA, length(common.phecodes)),
+                       pval.slc25a37_mac_gteq6=rep(NA, length(common.phecodes)),
+                       pval.slc25a37_mac_lt6=rep(NA, length(common.phecodes))
+                       ) %>% as_tibble()
+
+for(i in 1:length(common.phecodes)){
+  phecode=common.phecodes[i]
+  # mres <- metagen(TE=c(x.samhd1$beta[i], x.twnk$beta[i], x.tfam$beta[i], x.slc25a37$beta[i]),
+  #                        seTE=c(x.samhd1$SE[i], x.twnk$SE[i], x.tfam$SE[i], x.slc25a37$SE[i]))
+  mres <- metagen(TE=c(x.samhd1$beta.x[x.samhd1$phecode==phecode],
+             x.samhd1$beta.y[x.samhd1$phecode==phecode],
+             x.twnk$beta.x[x.twnk$phecode==phecode],
+             x.twnk$beta.y[x.twnk$phecode==phecode],
+             x.tfam$beta.x[x.tfam$phecode==phecode],
+             x.tfam$beta.y[x.tfam$phecode==phecode],
+             x.slc25a37$beta.x[x.slc25a37$phecode==phecode],
+             x.slc25a37$beta.y[x.slc25a37$phecode==phecode]),
+        seTE = c(x.samhd1$SE.x[x.samhd1$phecode==phecode],
+             x.samhd1$SE.y[x.samhd1$phecode==phecode],
+             x.twnk$SE.x[x.twnk$phecode==phecode],
+             x.twnk$SE.y[x.twnk$phecode==phecode],
+             x.tfam$SE.x[x.tfam$phecode==phecode],
+             x.tfam$SE.y[x.tfam$phecode==phecode],
+             x.slc25a37$SE.x[x.slc25a37$phecode==phecode],
+             x.slc25a37$SE.y[x.slc25a37$phecode==phecode]),
+        sm = 'OR')
+  # stouffer <- poolr::stouffer(p=c(x.samhd1$pval.rand[i],
+  #                                 x.twnk$pval.rand[i],
+  #                                 x.tfam$pval.rand[i],
+  #                                 x.slc25a37$pval.rand[i]))
+  # fisher <- poolr::fisher(p=c(x.samhd1$pval.rand[i],
+  #                                 x.twnk$pval.rand[i],
+  #                                 x.tfam$pval.rand[i],
+  #                                 x.slc25a37$pval.rand[i]))
+
+  meta.res.df$phecode[i] <- common.phecodes[i]
+  meta.res.df$beta[i] <- mres$TE.random
+  meta.res.df$SE[i] <- mres$seTE.random
+  meta.res.df$pval.rand[i] <- mres$pval.random
+  meta.res.df$OR.rand[i] <- exp(mres$TE.random)
+  meta.res.df$pval.samhd1_mac_gteq6[i] <- mres$pval[1]
+  meta.res.df$pval.samhd1_mac_lt6[i] <- mres$pval[2]
+  meta.res.df$pval.twnk_mac_gteq6[i] <- mres$pval[3]
+  meta.res.df$pval.twnk_mac_lt6[i] <- mres$pval[4]
+  meta.res.df$pval.tfam_mac_gteq6[i] <- mres$pval[5]
+  meta.res.df$pval.tfam_mac_lt6[i] <- mres$pval[6]
+  meta.res.df$pval.slc25a37_mac_gteq6[i] <- mres$pval[7]
+  meta.res.df$pval.slc25a37_mac_lt6[i] <- mres$pval[8]
+
+  # meta.res.df$pval.fisher[i] <- fisher$p
+  # meta.res.df$pval.stouffer[i] <- stouffer$p
+  # meta.res.df$pval.samhd1[i] <- x.samhd1$pval.rand[i]
+  # meta.res.df$pval.twnk[i] <- x.twnk$pval.rand[i]
+  # meta.res.df$pval.tfam[i] <- x.tfam$pval.rand[i]
+  # meta.res.df$pval.slc25a37[i] <- x.slc25a37$pval.rand[i]
+}
+meta.res.df <- 
+  meta.res.df %>% 
+  arrange(pval.rand) %>% 
+  inner_join(phecode_def, by='phecode') %>% 
+  inner_join(case.ctrl_info, by='phecode') %>% 
+  select(phecode, beta, SE, OR.rand, pval.rand, phenotype, n.cases, n.controls, 
+         pval.samhd1_mac_gteq6, pval.samhd1_mac_lt6,
+         pval.twnk_mac_gteq6, pval.twnk_mac_lt6,
+         pval.tfam_mac_gteq6, pval.tfam_mac_lt6,
+         pval.slc25a37_mac_gteq6, pval.slc25a37_mac_lt6)
+
+meta.res.df %>% 
+  gt() %>% 
+  # fmt_scientific(columns=colnames(meta.res.df)[stringr::str_detect(colnames(meta.res.df), 'pval')], decimals=3) %>% 
+  fmt_scientific(columns=c('pval.rand'), decimals = 3) %>% 
+  fmt_number(columns = c('beta','SE','OR.rand'), decimals=2)
+
+  # select(phecode, beta, SE, pval.rand, pval.stouffer, pval.fisher, pval.samhd1,
+  #        pval.twnk, pval.tfam, pval.slc25a37, phenotype, n.cases, n.controls)
+# meta.res.df <- 
+#   meta.res.df %>%
+#   inner_join(x.samhd1, by='phecode') %>%
+#   inner_join(x.twnk, by='phecode') %>% 
+#   inner_join(x.tfam, by='phecode') %>% 
+#   inner_join(x.slc25a37, by='phecode')
+# colnames(meta.res.df) <-
+#   c('phecode','beta.random','SE.random','pval.random', 'phenotype',
+#     'n.cases','n.controls',
+#     'beta.rand.samhd1','SE.rand.samhd1','pval.rand.samhd1',
+#     'beta.rand.twnk','SE.rand.twnk','pval.rand.twnk',
+#     'beta.rand.tfam','SE.rand.tfam','pval.rand.tfam',
+#     'beta.rand.slc25a37','SE.rand.slc25a37','pval.rand.slc25a37')
+```
+
+
+```{r}
+x <- x1 %>% inner_join(x2, by='phecode')
+x$fisher.p <- rep(NA, nrow(x))
+x$stouffer.p <- rep(NA, nrow(x))
+for(i in 1:nrow(x)){
+  x$fisher.p[i] <- 
+    poolr::fisher(c(x$p.x[i], x$p.y[i]))[['p']]
+}
+x <- x %>% inner_join(phecode_def, by='phecode')
+x <- x %>% dplyr::select(-phecode_exclude_range, -rollup, -leaf)
+x <- x %>% inner_join(case.ctrl_info, by='phecode')
+colnames(x) <- c('phecode','beta.mac_gteq6','SE.mac_gteq6','OR.mac_gteq6','chisq.mac_gteq6','p.mac_gteq6',
+                 'beta.mac_lt6','SE.mac_lt6','OR.mac_lt6','chisq.mac_lt6','p.mac_lt6',
+                 'p.fisher', 'p.stouffer',
+                 'phenotype','sex_makeup','category_num','category',
+                 'n.cases', 'n.controls', 'case.ctrl_ratio')
+
+# back-correct SE
+x$SE.mac_gteq6 <-
+  abs(x$beta.mac_gteq6) / sqrt(x$chisq.mac_gteq6)
+x$SE.mac_lt6 <-
+  abs(x$beta.mac_lt6) / sqrt(x$chisq.mac_lt6)
+# z-scores
+x$Z.mac_gteq6 <- (x$beta.mac_gteq6 / x$SE.mac_gteq6)
+x$Z.mac_lt6 <- (x$beta.mac_lt6 / x$SE.mac_lt6)
+# z-stouffer
+x$Z_stouffer <- rep(NA, nrow(x))
+for(i in 1:nrow(x)){
+  x$Z_stouffer[i] <- 
+    sum(c(x$Z.mac_gteq6[i], x$Z.mac_lt6[i])) / sqrt(2)
+# p-value stouffer from z_stouffer (two-sided since individual tests are two-sided and combined z-stouffer is two-sided)
+  x$p.stouffer[i] <- 2*pnorm(x$Z_stouffer[i], lower.tail=FALSE)
+}
+
+# meta analysis
+require(meta)
+x$p.fixed <- rep(NA, nrow(x))
+x$beta.random <- rep(NA, nrow(x))
+x$SE.random <- rep(NA, nrow(x))
+x$Z.random <- rep(NA, nrow(x))
+x$p.random <- rep(NA, nrow(x))
+for(i in 1:nrow(x)){
+  TE <- as.numeric(c(x$beta.mac_gteq6[i], x$beta.mac_lt6[i]))
+  seTE <- as.numeric(c(x$SE.mac_gteq6[i], x$SE.mac_lt6[i]))
+  tmp <- metagen(TE, seTE, sm='OR', n.e=rep(x$n.cases[i],2),n.c=rep(x$n.controls[i],2),
+                 studlab = c('s1','s2'))
+  x$p.fixed[i] <- tmp$pval.fixed
+  x$beta.random[i] <- tmp$TE.random
+  x$SE.random[i] <- tmp$seTE.random
+  x$Z.random[i] <- tmp$zval.random
+  x$p.random[i] <- tmp$pval.random
+}
+
+require(gt)
+x.twnk %>% arrange(p.random) %>% 
+  # inner_join(phecode_def, by='phecode') %>% 
+  select(phecode, beta.mac_gteq6, SE.mac_gteq6, beta.mac_lt6, SE.mac_lt6, OR.mac_gteq6, OR.mac_lt6, Z.mac_gteq6, Z.mac_lt6, Z_stouffer, p.fisher, p.stouffer, p.fixed, p.random, n.cases, n.controls, phenotype) %>% 
+  gt() %>% 
+  # fmt_number(columns = 'case.ctrl_ratio', n_sigfig = 3) %>% 
+  # fmt_scientific(columns='p.mac_gteq6', decimals = 2) %>% 
+  # fmt_scientific(columns='p.mac_lt6', decimals = 2) %>% 
+  fmt_number(columns='beta.mac_gteq6', decimals = 2) %>% 
+  fmt_number(columns='beta.mac_lt6', decimals = 2) %>% 
+  fmt_number(columns='SE.mac_gteq6', decimals = 2) %>% 
+  fmt_number(columns='SE.mac_lt6', decimals = 2) %>% 
+  fmt_number(columns=c('Z.mac_gteq6','Z.mac_lt6','Z_stouffer'), decimals = 2) %>% 
+  fmt_scientific(columns='p.fisher', decimals = 2) %>% 
+  fmt_scientific(columns='p.stouffer', decimals = 2) %>% 
+  fmt_scientific(columns='p.fixed', decimals = 2) %>% 
+  fmt_scientific(columns='p.random', decimals = 2) %>% 
+  fmt_number(columns='OR.mac_gteq6', n_sigfig = 3) %>% 
+  fmt_number(columns='OR.mac_lt6', n_sigfig = 3)
+
+```
+
+Firth correction of mac.all
+```{r}
+source('~/mito_rare-variant/scripts/qqunif.plot.R')
+s.mac_all <- TopmedPipeline::getobj('~/mito_rare-variant//resources//phewas_results_samhd1_mac_all.unrel.rds')
+s.mac_all_ <- TopmedPipeline::getobj('~/mito_rare-variant/resources/phewas_results_samhd1_mac_all.unrel.firth_corr.rds')
+phecode_def <- read_csv('~/mito_rare-variant//resources//phecode_definitions1.2.csv')
+s.mac_all <- s.mac_all %>% inner_join(phecode_def, by='phecode')
+s.mac_all_ <- s.mac_all_ %>% inner_join(phecode_def, by='phecode')
+s.mac_all_1 <- s.mac_all %>% filter(p > 0.05)
+s.mac_all_ <- rbind(s.mac_all_, s.mac_all_1)
+case.ctrl_info <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n.cases.n.controls.rds')
+case.ctrl_info <- tibble(phecode=names(case.ctrl_info[[1]]), n.cases=case.ctrl_info[[1]], n.controls=case.ctrl_info[[2]], case.ctrl_ratio=case.ctrl_info[[3]]) %>% 
+  as_tibble()
+
+pval.list<-list("MAC All - Uncorrected"=s.mac_all$p, "MAC All - Firth Bias Correction"=s.mac_all_$p)
+qqunif.plot(pval.list, auto.key=list(corner=c(.95,.05)))
+
+# table of p-values from MAC all <= 0.05, uncorrected & corrected
+tmp <- s.mac_all %>%
+  inner_join(s.mac_all_, by='phecode') %>% 
+  filter(p.x <= 0.05) %>% 
+  select(phecode, phenotype.x, beta.x, SE.x, OR.x, beta.y,SE.y,OR.y, p.x, p.y) %>%
+  inner_join(case.ctrl_info, by='phecode')
+colnames(tmp) <- c('phecode','Phenotype','Beta','SE','OR','Beta_Firth','SE_Firth', 'OR_Firth', 'p', 'p_Firth','n.cases','n.controls','case.ctrl_ratio')
+
+tmp %>% 
+  gt() %>% 
+  fmt_number(columns = 'case.ctrl_ratio', n_sigfig = 3) %>% 
+  fmt_scientific(columns='p', decimals = 2) %>% 
+  fmt_scientific(columns='p_Firth', decimals = 2) %>% 
+  fmt_number(columns='OR', n_sigfig = 3) %>% 
+  fmt_number(columns='OR_Firth', n_sigfig = 3)
+```
+
+
+
+Effective number of tests using simpleM
+```{r}
+i <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n180256.icd10_codes_phecodes.rds')$icd10_phecodes
+unrel <- read_tsv('~/mito_rare-variant/resources/n176064.unrelated.plink.to_keep.IIDs', col_names='id')
+i <- i %>% inner_join(unrel, by='id')
+# i <- apply(i, 2, function(x){
+#   x[which(is.na(x))] <- 0
+#   return(x)
+# })
+
+# Impute NAs in pheno columns with 0
+# remove phenos with only 1 remaining
+i_ <- as.list(as.data.frame(as.matrix(i)))
+pheno.mat <- t(sapply(i_[2:length(i_)], 
+                    function(x) {x[which(is.na(x))]<-0; return(x)}, 
+                    simplify = 'array'))
+pheno.mat <- pheno.mat[-which(apply(pheno.mat, 1, function(x) all(x==0))),]
+# write.table(pheno.mat, file='~/mito_rare-variant/resources/pheno.mat.for_meff.txt', sep = ' ', row.names = F, col.names = F)
+```
+
+Effective number of tests using additional methods
+```{r}
+# create correlation matrix
+# use propagate::bicor() since there is 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

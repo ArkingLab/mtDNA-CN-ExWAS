@@ -1,0 +1,609 @@
+---
+title: "Modeling mitochondrial copy number genetic architecture."
+output:
+  html_document:
+    df_print: paged
+---
+Model genetic architecture of mitochondrial copy number on two parameters: minor allele frequency and effect size.
+Use 129 independent SNPs discovered through GWAS.
+Compute power to detect 
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(hrbrthemes)
+library(betafunctions)
+library(betareg)
+library(genpwr)
+library(reshape2)
+library(rsnps)
+savedir='~/projects/mito_rare-variant/analyses/burden/'
+# gwas <- read_tsv('/Users/vkp/projects/mito_rare-variant/n129.GWAS.sumstats.txt')
+gwas <- read_csv('/Users/vkp/projects/mito_rare-variant/resources/mtDNA_CN_GWAS_results.csv')
+# gwas <- gwas[1:129,]
+gwas$A1FREQ.2 <-
+  ifelse(gwas$A1FREQ > 0.5, 1 - gwas$A1FREQ, gwas$A1FREQ)
+gwas$`EFFECT SIZE ESTIMATE` <-
+  ifelse(gwas$A1FREQ > 0.5, -1*gwas$`EFFECT SIZE ESTIMATE`, gwas$`EFFECT SIZE ESTIMATE`)
+
+# gwas <- gwas %>% filter(GWAS=='primary') # select only independent hits (=primary)
+```
+# Compute power to detect GWAS results
+```{r}
+beta <- abs(gwas$`EFFECT SIZE ESTIMATE`)
+maf <- gwas$A1FREQ.2
+df.gwas <- data.frame(beta,maf)
+
+maf <- emdbook::lseq(from = 1e-04,
+# maf <- seq(from = 1e-07,
+                     # to = 0.002,
+                     to = 0.5,
+                     length.out = 200)
+abs.beta <- seq(from = 0,
+          to = 1,
+          length.out = 200)
+pw.df <- data.frame(maf=maf,
+                    abs.beta=abs.beta)
+
+
+# Assuming dominant model, compute power across maf and beta from GWAS
+# alpha set to 5e-08 (Genome Wide significance)
+pw <- genpwr::power.calc.linear(N=465809, MAF=pw.df$maf, ES=pw.df$abs.beta, 
+                        sd_y = 1, Alpha=5e-08, True.Model = 'Dominant', 
+                        Test.Model = 'Dominant')
+pw <- as_tibble(pw)
+
+# df.gwas <- pw %>% 
+#   distinct(MAF,ES, .keep_all = T) %>% 
+#   inner_join(df.gwas, by=c('MAF'='maf', 'ES'='beta'))
+# 
+# # table of maf,beta,pwr
+# df.gwas %>% 
+#   arrange(desc(`Power_at_Alpha_5e-08`)) %>% 
+#   gt() %>% 
+#   fmt_number(columns=vars(MAF,R2,`Power_at_Alpha_5e-08`), 
+#              decimals = 2, n_sigfig = 2, drop_trailing_zeros = T)
+# 
+# # plot of maf,power
+# df.gwas %>%
+#   ggplot(aes(x=MAF,y=`Power_at_Alpha_5e-08`,size=ES)) +
+#   geom_point(alpha=0.5) + theme_ipsum_rc() +
+#   xlab('Minor Allele Frequency') + 
+#   ylab('Power at alpha = 5e-08') +
+#   labs(title='Power as a function of MAF)',
+#        subtitle = 'n=129 GWAS')
+# 
+# # plot of ES,power
+# df.gwas %>%
+#   ggplot(aes(x=ES,y=`Power_at_Alpha_5e-08`,size=MAF)) +
+#   geom_point(alpha=0.5) + theme_ipsum_rc() +
+#   xlab('Effect Size (SD)') +
+#   ylab('Power at alpha = 5e-08') +
+#   labs(title='Power as a function of Effect Size',
+#        subtitle = 'n=129 GWAS')
+  
+pw <- as_tibble(pw) %>% 
+  mutate(Power=`Power_at_Alpha_5e-08`)
+df <- pw %>% dplyr::select(MAF,ES,Power)
+g <- df %>% 
+  ggplot() + 
+  geom_point(alpha=1,size=1, aes(x=MAF, y=ES, color=Power), data=df) +
+  scale_color_continuous(high = "#BFE1B0", low = "#137177") +
+  # geom_line(data = df.pred, aes(x = maf, y = beta), linetype='dashed') +
+  ggnewscale::new_scale_color() +
+  geom_point(data = gwas, aes(x=A1FREQ.2, y=abs(`EFFECT SIZE ESTIMATE`)), 
+             alpha=1, color='black',size=1) + # gwas variants
+  # xlim(c(0,1e-2)) +
+  # xlim(c(0.002,0.5)) +
+  # ylim(c(0,0.25)) +
+  xlab('Minor Allele Frequency (log-scale)') +
+  ylab('Absolute Effect Size (SD)') +
+  labs(title='Power as a function of Effect Size and MAF',
+       subtitle='N=465,809\nType I Error (alpha) = 5e-08 (Genome-wide significance)') +
+  theme_modern_rc(grid=T, ticks = T) +
+  scale_x_log10()
+g
+
+if(FALSE) {
+  # save plot
+  ggsave(
+    'Power_calculations_common_gwas_n465809.jpg',
+    plot = g,
+    device = 'jpg',
+    dpi = 'retina',
+    width = 9,
+    height = 5,
+    units = 'in'
+  )
+}
+
+# library(reshape2)
+# df.gwas2.tmp <- df.gwas2 %>% dplyr::select(Es.abs,MAF,`Power_at_Alpha_5e-08`)
+# df.gwas2.tmp <- reshape2::melt(data=df.gwas2.tmp,id="ES.abs")
+# 
+# gg = ggplot(df.gwas2.tmp, aes(x = variable, y = ES.abs)) + 
+#   geom_raster(aes(fill = value)) + 
+#   geom_contour(aes(z = value), colour = "white", size = 0.2, alpha = 0.5) + 
+#   geom_text_contour(aes(z = value),  colour = "white" ) +
+#   labs(x = "ES.abs", 
+#       y = "MAF", 
+#       fill = "Power") + 
+#   theme(legend.title = element_text(size = 10, face = "bold"), 
+#   legend.position = "top", panel.background = element_blank(), 
+#   axis.text = element_text(colour = "black", size = 10, face = "bold"), 
+#   axis.title = element_text(size = 12, face = "bold"), 
+#   legend.text = element_text(size = 11), legend.key = element_blank()) + 
+#  scale_fill_continuous(low = "#BFE1B0", high = "#137177") +
+#   scale_y_continuous(expand = c(0,0)) +
+#   scale_x_continuous(expand = c(0,0)) 
+# 
+# gg
+
+```
+Effect allele frequency vs Effect size
+```{r}
+df <- tibble(MAF=gwas$A1FREQ.2, ES=gwas$`EFFECT SIZE ESTIMATE`)
+# plot basic maf vs effect size
+g <- ggplot() +
+  geom_point(
+    data = df,
+    aes(x = MAF, y = abs(ES)),
+    color='black'
+  ) +
+  ylim(c(0,max(df$ES))) +
+  theme_ipsum_rc() +
+  xlab('Minor Allele Frequency') +
+  ylab('Absolute Effect Size (Std. Dev.)') +
+  ggtitle('Genetic architecture of Mitochondrial Copy Number',
+          subtitle = 'n=129 indepdendent Autosomal SNPs from GWAS')
+  
+g
+#ggsave(paste0(savedir,'/base_garch_mtCN_n96_GWAS_SNPs.jpg'))#,
+       # width=7,
+       # height=7)
+```
+Next, we model using a power curve
+```{r}
+library(aomisc)
+
+# fit using power curve
+beta <- abs(gwas$`EFFECT SIZE ESTIMATE`) # absolute beta
+maf <- gwas$A1FREQ.2 # freq
+df <- data.frame(beta,maf)
+m.power <- drm(beta ~ maf, 
+               fct = DRC.powerCurve(), 
+               data = df) # power curve
+
+# predict on new data
+model <- m.power
+title='Y=aX^b power law model'
+# seq=seq(1e-07, 0.5, 0.00001)
+seq=emdbook::lseq(1e-07, 0.5,length.out = 500)
+pred.beta <- predict(model, data.frame(maf = seq))
+df.pred <- tibble(maf = seq, beta = pred.beta)
+
+# plot curve overlay
+model.coef=paste0('Effect Size = ',
+                  round(m.power$coefficients[1],2),
+                  ' x MAF ^',
+                  round(m.power$coefficients[2],2))
+g +
+  geom_line(data = df.pred, aes(x = maf, y = beta, col = "red")) +
+  ylim(0, max(df$beta)) + # max ylim set to max beta from GWAS for clarity
+  # ggtitle(title) +
+  scale_color_discrete(name = "Model Fit\nY=aX^b Power law model", labels = c(model.coef)) +
+  theme(
+    legend.position = c(.95, .9),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    )
+ggsave(paste0(savedir,'/base_wFit_garch_mtCN_n133_GWAS_SNPs.jpg'), width=9,height=5)
+
+# extend to rare variants
+g +
+  geom_line(data = df.pred, aes(x = maf, y = beta, col = "red")) +
+  ylim(0, 0.8) + # max ylim set to max beta from GWAS for clarity
+  xlab('Minor Allele Frequency (log-scale)') +
+  scale_x_log10() +
+  scale_color_discrete(name = "Model Fit\nY=aX^b Power law model", labels = c(model.coef)) +
+  theme(
+    legend.position = c(.95, .9),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    )
+ggsave(paste0(savedir,'/base_wFit_scale_x_log10_garch_mtCN_n133_GWAS_SNPs.jpg'),
+       width=9,height=5)
+```
+Add rare variant results
+```{r}
+# rare variant bonferroni-passing results from bolt-lmm single-variant tests
+rv=tibble(maf=c(4.91825e-03,3.82814e-04,4.07756e-04),
+          beta=c(-0.173681, 0.621255, 0.695547),
+          pval=c(8.5e-13, 4.5e-15, 1.4e-19))
+  
+#maf vs beta (log-scale)
+# g +
+#   geom_line(data = df.pred, aes(x = maf, y = beta), col = "red") +
+#   geom_hline(data = rv, aes(yintercept=abs(beta)), linetype='dashed', color='blue', alpha=0.8) +
+#   geom_vline(data = rv, aes(xintercept=maf), linetype='dashed', color='blue', alpha=0.8) +
+#   geom_point(data = rv, aes(x=maf, y=abs(beta)), col = 'red', size=2) +
+#   # xlim(0,0.01) +
+#   scale_y_log10() +
+#   # scale_x_log10() +
+#   xlab('Minor Allele Frequency') +
+#   ylab('Absolute Effect Size (SD, log-scale)')
+
+# g +
+#   geom_line(data = df.pred, aes(x = maf, y = beta, col = "red")) +
+#   geom_hline(data = rv, aes(yintercept=abs(beta)), linetype='dashed', color='blue', alpha=0.8) +
+#   geom_vline(data = rv, aes(xintercept=maf), linetype='dashed', color='blue', alpha=0.8) +
+#   geom_point(data = rv, aes(x=maf, y=abs(beta)), col = 'red', size=2) +
+#   scale_y_log10() +
+# #  ylim(0, max(df$beta)) + # max ylim set to max beta from GWAS for clarity
+#   # ggtitle(title) +
+#   scale_color_discrete(name = "Model Fit", labels = c(model.coef)) +
+#   theme(
+#     legend.position = c(.95, .95),
+#     legend.justification = c("right", "top"),
+#     legend.box.just = "right",
+#     legend.margin = margin(6, 6, 6, 6)
+#     )
+
+# maf (log-scale) vs beta
+g + 
+  geom_line(data = df.pred, aes(x = maf, y = beta, col = "red")) +
+  geom_hline(data = rv, aes(yintercept=abs(beta)), linetype='dashed', color='blue', alpha=0.7) +
+  geom_vline(data = rv, aes(xintercept=maf), linetype='dashed', color='blue', alpha=0.7) +
+  geom_point(data = rv, aes(x=maf, y=abs(beta)), col = 'red', size=2) +
+  # xlim(0,0.01) +
+  # scale_y_log10() +
+  scale_x_log10() +
+  ylim(c(0,0.8)) +
+  xlab('Minor Allele Frequency (log-scale)') +
+  ylab('Absolute Effect Size (Std. Dev.)') +
+  labs(subtitle = 'n=129 GWAS + 3 ExWAS indepdent hits')+
+  scale_color_discrete(name = "Model Fit\nY=aX^b Power law model", labels = c(model.coef)) +
+  theme(
+    legend.position = c(0.95, .7),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    )
+# ggsave(paste0(savedir,'/base_wFit_garch_mtCN_n96_GWAS_k3_ExWAS_SNPs.jpg'))#,
+       # width=7,
+       # height=7)
+ # maf (log-scale) vs beta (log-scale)
+ # g + 
+ #   geom_line(data = df.pred, aes(x = maf, y = beta), col = "red") +
+ #   geom_hline(data = rv, aes(yintercept=abs(beta)), linetype='dashed', color='blue', alpha=0.8) +
+ #   geom_vline(data = rv, aes(xintercept=maf), linetype='dashed', color='blue', alpha=0.8) +
+ #   geom_point(data = rv, aes(x=maf, y=abs(beta)), col = 'red', size=2) +
+ #   scale_y_log10() +
+ #   scale_x_log10() +
+ #   # ylim(c(0,0.8)) +
+ #   xlab('Minor Allele Frequency (log-scale)') +
+ #   ylab('Absolute Effect Size (SD, log-scale)')
+```
+# Compute power to detect associations across MAF,ES ranges
+```{r}
+N=414665
+# maf <- seq(from = 1e-07,
+#            to = 0.002,
+#            length.out = 500)
+maf <- emdbook::lseq(from = 1e-07,
+                     # to = 0.002,
+                     to = 0.5,
+                     length.out = 500)
+abs.beta <- seq(from = 0,
+          to = 2.5,
+          length.out = 500)
+pw.df <- data.frame(maf=maf,
+                    abs.beta=abs.beta)
+
+# rare variant study power
+# Assuming dominant model, compute power across maf and beta 
+# pw <- genpwr::power.calc.linear(N=180801, MAF=pw.df$maf, ES=pw.df$abs.beta,
+# pw <- genpwr::power.calc.linear(N=465809, MAF=pw.df$maf, ES=pw.df$abs.beta,
+pw <- genpwr::power.calc.linear(N=414665, MAF=pw.df$maf, ES=pw.df$abs.beta,
+                        sd_y = 0.9843152,
+                        # Alpha=1.153169e-08, # 0.05 / 4,335,879
+                        Alpha=7.389127e-09, # 0.05 / 4,335,879
+                        True.Model = 'Dominant', 
+                        Test.Model = 'Dominant')
+pw <- as_tibble(pw) %>% 
+  mutate(Power=`Power_at_Alpha_7.389127e-09`)
+```
+```{r}
+res <- read_tsv('~/projects/mito_rare-variant/n414k.bolt_lmm_results.bonf_sig.mac_gteq6.txt')
+res$bonf.sig <- rep('TRUE', nrow(res))
+res %>% dplyr::select(SNP, A1FREQ, BETA, MAC)
+res$power <- rep(NA, nrow(res))
+for(i in 1:nrow(res)){
+  tmp1 <- genpwr::power.calc.linear(
+      N = 414665,
+      MAF =  res$A1FREQ[i],
+      ES = abs(res$BETA[i]),
+      sd_y = 0.9843152,
+      Alpha = 7.389127e-09,
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+  
+  res$power[i] <- 
+    tmp1$`Power_at_Alpha_7.389127e-09`
+}
+res %>% dplyr::select(SNP, A1FREQ, BETA, MAC, P_BOLT_LMM, power) %>% arrange(P_BOLT_LMM)
+```
+
+```{r}
+df <- pw %>% dplyr::select(MAF,ES,Power)
+g <- df %>% 
+  ggplot() + 
+  geom_point(alpha=1,size=1, aes(x=MAF, y=ES, color=Power), data=df) +
+  scale_color_continuous(high = "#BFE1B0", low = "#137177") +
+  geom_line(data = df.pred, aes(x = maf, y = beta), linetype='dashed') +
+  ggnewscale::new_scale_color() +
+  geom_point(data = gwas, aes(x=A1FREQ.2, y=abs(`EFFECT SIZE ESTIMATE`)), alpha=0.5) + # gwas variants
+  geom_point(data = res, aes(x=A1FREQ, y=abs(BETA), color=bonf.sig), alpha=1) + #, size=-log10(P_BOLT_LMM))) + # rare variants (bonf_sig)
+  # scale_color_manual(values = c('gray','red')) +
+  scale_color_manual(values = c('red')) +
+  # xlim(c(0,1e-2)) +
+  # xlim(c(0,0.002)) +
+  ylim(c(0,2.5)) +
+  xlab('Minor Allele Frequency (log-scale)') +
+  ylab('Absolute Effect Size (SD)') +
+  labs(title='Power as a function of Effect Size and MAF',
+       subtitle='N=414,665\nType I Error (alpha) = 7.4e-09 (Bonferroni)') +
+       # subtitle='N=465,809 (Hypothetical Sample Size)\nType I Error (alpha) = 1.15e-08 (Bonferroni)') +
+  theme_modern_rc(grid=T, ticks = T) +
+  scale_x_log10() #+
+g
+
+# save plot
+if(TRUE){
+ggsave('Power_calculations_rare_n414665.jpg',
+# ggsave('Power_calculations_rare_n465809_hypothetical_WES_ss.jpg',
+       plot = g, device = 'jpg', dpi = 'retina',
+       width=9, height=5, units = 'in')
+}
+```
+```{r}
+# df <- pw %>% dplyr::select(MAF,ES,Power)
+# df <- reshape2::melt(data=df,id="MAF")
+# gg = ggplot(df, aes(x = variable, y = ES)) +
+#   geom_raster(aes(fill = value)) # +
+#   geom_contour(aes(z = value), colour = "white", size = 0.2, alpha = 0.5) +
+#   geom_text_contour(aes(z = value),  colour = "white" ) +
+#   labs(x = "ES.abs",
+#       y = "MAF",
+#       fill = "Power") +
+#   theme(legend.title = element_text(size = 10, face = "bold"),
+#   legend.position = "top", panel.background = element_blank(),
+#   axis.text = element_text(colour = "black", size = 10, face = "bold"),
+#   axis.title = element_text(size = 12, face = "bold"),
+#   legend.text = element_text(size = 11), legend.key = element_blank()) +
+#  scale_fill_continuous(low = "#BFE1B0", high = "#137177") +
+#   scale_y_continuous(expand = c(0,0)) +
+#   scale_x_continuous(expand = c(0,0))
+# 
+# gg
+```
+Additional modeling methods using beta regression (OLD)
+```{r}
+# betafunctions package - distribution fitting
+# plot(maf, y=beta)
+# params <- Beta.2p.fit(maf*beta)
+# p1 <- dbeta(maf, params$alpha, params$beta)
+# points(seq(1,length(maf)), p1, col='red', type='l')
+
+# betareg package - curve fitting + predict
+# beta regression, exponential
+# b3.lm <- lm(log(1+beta)~maf, data = df)
+# b3 <- betareg(beta~maf, data = df, link='cauchit')
+# m <- nls(df$beta ~ I(a*exp(-b*x)+c), data=df, start=list(a=max(y), b=1, c=10), trace=T)
+
+
+# # beta regression
+# a=1
+# b=355
+# tmp <- as.data.frame(betafunctions::Beta.gfx.poly.pdf(0,0.5,0.001,a,b))
+# bdist <- tmp[2:nrow(tmp),]
+# colnames(bdist) <- c('maf','beta')
+# g + 
+#   geom_line(data = df.pred, aes(x = maf, y = beta), col = "red") +
+#   ggtitle('Beta regression (link = Cauchit)')
+# beta dist
+# g +
+#   geom_line(data = bdist, aes(x = maf, y = beta), col = "red") +
+#   ggtitle(sprintf(fmt = 'Beta dist (alpha=%f,beta=%f)',a,b)) +
+#   xlim(c(0,0.01))
+  # geom_line(data = df.fitted, aes(x = maf.orig, y = fitted), col='blue') +
+  # geom_line(data = df.pred.lm, aes(x = maf, y = beta), col = "red") +
+  # ylim(c(0,0.5))
+```
+Power analysis for predicted curve fit
+```{r}
+# df.pred1 <- df.pred %>% filter(maf<= 0.002)
+# 
+# # Assuming dominant model, compute power
+# pw <- genpwr::power.calc.linear(N=180801, MAF=df.pred1$maf, ES=df.pred1$beta, 
+#                         sd_y = 1, Alpha=(0.05/4335879), True.Model = 'Dominant', 
+#                         Test.Model = 'Dominant')
+# pw <- as_tibble(pw)
+# df.pred1 <- pw %>% 
+#   distinct(MAF,ES, .keep_all = T) %>% 
+#   inner_join(df.pred1, by=c('MAF'='maf', 'ES'='beta'))
+# 
+# # table of maf,beta,pwr
+# df.pred1 %>% 
+#   arrange(desc(`Power_at_Alpha_1.15316871158074e-08`)) %>% 
+#   gt() %>% 
+#   fmt_number(columns=vars(MAF,R2,`Power_at_Alpha_1.15316871158074e-08`), 
+#              decimals = 2, n_sigfig = 2, drop_trailing_zeros = T)
+# 
+# df.pred1 %>% 
+#   ggplot(aes(x=MAF,y=ES,z=`Power_at_Alpha_1.15316871158074e-08`)) +
+#   geom_point(alpha=0.3)
+```
+
+Compute power isobars; i.e. the ES at specified power
+```{r}
+require(emdbook)
+require(genpwr)
+N=414665
+maf <- emdbook::lseq(from = 1/(2*N), # singleton MAF
+                     # to = 0.002,
+                     to = 0.5,
+                     length.out = 500)
+abs.beta <- seq(from = 0,
+          to = 2.5,
+          length.out = 500)
+pw.df <- data.frame(maf=maf,
+                    abs.beta=abs.beta,
+                    pw.10=rep(0.1, length(maf)),
+                    pw.50=rep(0.5, length(maf)),
+                    pw.80=rep(0.8, length(maf)),
+                    pw.90=rep(0.9, length(maf)))
+
+# rare variant study power
+# es.res <- matrix(data=NA, nrow=nrow(pw.df), ncol=8)
+es.res.10 <- list()
+es.res.50 <- list()
+es.res.80 <- list()
+es.res.90 <- list()
+for(i in 1:nrow(pw.df)){
+  message(i)
+  # Assuming dominant model, compute ES across maf and at specified *power*
+  es.res.10[[i]] <- genpwr::es.calc.linear(
+    N = 414665,
+    MAF = pw.df$maf[i],
+    power = 0.1,
+    sd_y = 0.9843152,
+    Alpha = 7.389127e-09,
+    # 0.05 / ~6M MAC>=6 variants
+    True.Model = 'Dominant',
+    Test.Model = 'Dominant'
+  )
+
+  es.res.50[[i]] <-
+    genpwr::es.calc.linear(
+      N = 414665,
+      MAF = pw.df$maf[i],
+      power = 0.50,
+      sd_y = 0.9843152,
+      Alpha = 7.389127e-09,
+      # 0.05 / ~6M MAC>=6 variants
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+
+  es.res.80[[i]] <-
+    genpwr::es.calc.linear(
+      N = 414665,
+      MAF = pw.df$maf[i],
+      power = 0.8,
+      sd_y = 0.9843152,
+      Alpha = 7.389127e-09,
+      # 0.05 / ~6M MAC>=6 variants
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+
+  es.res.90[[i]] <-
+    genpwr::es.calc.linear(
+      N = 414665,
+      MAF = pw.df$maf[i],
+      power = 0.9,
+      sd_y = 0.9843152,
+      Alpha = 7.389127e-09,
+      # 0.05 / ~6M MAC>=6 variants
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+  
+}
+
+es.res.10 <- bind_rows(es.res.10) %>% as_tibble()
+es.res.50 <- bind_rows(es.res.50) %>% as_tibble()
+es.res.80 <- bind_rows(es.res.80) %>% as_tibble()
+es.res.90 <- bind_rows(es.res.90) %>% as_tibble()
+```
+
+Plot power isobars
+```{r}
+# Get list of rv that pass bonf sig
+MAC.cutoff=6
+res.dir='/Users/vkp/projects/mito_rare-variant/resources/results/single_var/'
+N=414665
+# Non inverse rank-normalized phenotype
+res.nonint <- vroom(paste0(res.dir,'bolt.lmm_n450k_exomes.chr1-22.adjustedforGWA_SNPs.mtDNA_CN_m2_nonINT.stats.gz'), progress=F)
+res.nonint <- res.nonint %>% mutate(MAC=(A1FREQ*N)*2)
+res.nonint <- res.nonint %>% filter(MAC >= MAC.cutoff)
+res.nonint <- res.nonint %>% mutate(bonf.sig=ifelse(P_BOLT_LMM <= (0.05 / nrow(res.nonint)),TRUE,FALSE))
+res.nonint.bonf <- res.nonint %>% filter(bonf.sig==TRUE)
+res.nonint.bonf <- res.nonint.bonf %>% dplyr::select(SNP, A1FREQ, BETA, SE, P_BOLT_LMM, MAC)
+# res.nonint.bonf list of 10 SNVs
+
+es.res <- tibble(maf=pw.df$maf, es.10=es.res.10$`ES_at_Alpha_7.389127e-09`,
+                 es.50=es.res.50$`ES_at_Alpha_7.389127e-09`,
+                 es.80=es.res.80$`ES_at_Alpha_7.389127e-09`,
+                 es.90=es.res.90$`ES_at_Alpha_7.389127e-09`)
+es.res$es.10 <- as.numeric(es.res$es.10)
+es.res$es.50 <- as.numeric(es.res$es.10)
+es.res$es.80 <- as.numeric(es.res$es.10)
+es.res$es.90 <- as.numeric(es.res$es.10)
+es.res.melted <- melt(data = es.res, id.vars = 'maf') %>% as_tibble()
+
+es.res.melted %>%
+  filter(maf > 5.5e-06) %>% 
+    ggplot(aes(x=maf, y=value, col=variable)) +
+    geom_line() +
+    scale_x_log10() +
+    theme_ipsum_rc() +
+    geom_point(data = df, aes(x=maf, y=abs(beta)), col='black', size=1) +
+    geom_line(data = df.pred %>% filter(maf >= 5.5e-06), aes(y=abs(beta), x=maf), col='blue', linetype='dashed') +
+    geom_point(data=res.nonint.bonf, aes(x=A1FREQ, y=abs(BETA)), col='red', size=1) +
+    xlab('Minor Allele Frequency (log-scale)') + ylab('Absolute Effect Size (SD mtDNA-CN)') +
+    ylim(c(0,2.5)) +
+    labs(
+         caption = bquote('N=414,665\nType I Error (alpha) = 7.4 x'~'10'^-9)) +
+           # 'N=414,665\nType I Error (alpha) = 7.4 x 10^-9 (Bonferroni)') +
+    scale_color_discrete(name='Power', labels=c('10%','50%','80%','90%','mtDNA-CN')) +
+  theme(legend.position='bottom', plot.caption = element_text(hjust = 0.5))
+```
+
+
+
+
+
+Compute power for BOLT results
+```{r}
+res <- read_tsv('~/projects/mito_rare-variant/n414k.bolt_lmm_results.bonf_sig.mac_gteq6.txt')
+res$bonf.sig <- rep('TRUE', nrow(res))
+res %>% dplyr::select(SNP, A1FREQ, BETA, MAC)
+res$power <- rep(NA, nrow(res))
+for(i in 1:nrow(res)){
+  tmp1 <- genpwr::power.calc.linear(
+      N = 414665,
+      MAF =  res$A1FREQ[i],
+      ES = abs(res$BETA[i]),
+      sd_y = 0.9843152,
+      Alpha = 7.389127e-09,
+      True.Model = 'Dominant',
+      Test.Model = 'Dominant'
+    )
+  
+  res$power[i] <- 
+    tmp1$`Power_at_Alpha_7.389127e-09`
+}
+res %>% dplyr::select(SNP, A1FREQ, BETA, MAC, P_BOLT_LMM, power) %>% arrange(P_BOLT_LMM)
+```
+
+
+
+
+
+
+

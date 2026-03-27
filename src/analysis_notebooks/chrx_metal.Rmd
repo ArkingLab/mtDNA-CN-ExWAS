@@ -1,0 +1,60 @@
+---
+title: "BOLT-LMM XChr meta analysis"
+output: html_notebook
+---
+
+Meta analyze sex-stratified BOLT_LMM results for exome based associations using METAL
+(https://genome.sph.umich.edu/wiki/METAL_Documentation)
+
+This is directly adapted from the GWAS Metal script here:
+`/dcl01/arking/data/static/UKBiobank/GWAS_data/analyses/mtDNA_CN/bolt/xchr/metal/pull_snps_metal/meta_analyze_x.R`
+
+# Read in BOLT-LMM results
+Note:
+1. Males and females were split and their chrX variants were run separately through BOLT-LMM.
+2. Meta anlayze results using METAL
+```{r}
+bolt.m <- read_tsv('stats.male.gz')
+bolt.f <- read_tsv('stats.female.gz')
+
+bolt.m$WEIGHT = 189679 # Weight = Number analyzed samples
+bolt.f$WEIGHT = 224504
+
+bolt.m %>% dplyr::select(SNP, ALLELE0, ALLELE1, BETA, P_BOLT_LMM, WEIGHT) %>% 
+  write_tsv('bolt.chrX.males.reduced.txt')
+
+bolt.f %>% dplyr::select(SNP, ALLELE0, ALLELE1, BETA, P_BOLT_LMM, WEIGHT) %>% 
+  write_tsv('bolt.chrX.females.reduced.txt')
+
+```
+
+METAL
+```{bash}
+metal
+
+# first input file:
+MARKER SNP
+
+# ALLELE RefAllele EffAllele
+ALLELE ALLELE0 ALLELE1
+EFFECT BETA
+PVALUE P_BOLT_LMM
+WEIGHT WEIGHT
+SEPARATOR TAB
+PROCESS /home/dnanexus/mtrv/single_rv/metal/bolt.chrX.males.reduced.txt
+
+# second input file:
+PROCESS /home/dnanexus/mtrv/single_rv/metal/bolt.chrX.females.reduced.txt
+
+OUTFILE /home/dnanexus/mtrv/single_rv/metal/META_analysis_m2_full .tbl
+ANALYZE
+QUIT
+```
+
+
+
+
+
+
+
+

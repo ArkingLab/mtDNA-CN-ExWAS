@@ -1,0 +1,1066 @@
+---
+title: "mtDNA single- and aggregate- rare-variant analyses"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+library(hrbrthemes)
+library(stargazer)
+library(gt)
+library(vroom)
+groups %>% mutate(ifelse(group %in% c('Unaffected Controls','Unaffected Siblings','Parents'), 0, 1))
+groups %>% mutate(asd=ifelse(group %in% c('Unaffected Controls','Unaffected Siblings','Parents'), 0, 1)) %>% count(asd)
+40 + 52 + 14
+groups <- groups %>% mutate(asd=ifelse(group %in% c('Unaffected Controls','Unaffected Siblings','Parents'), 0, 1))
+glm(as.factor(asd) ~ Pt_0.1, data = groups, family = 'binomial')
+summary(glm(as.factor(asd) ~ Pt_0.1, data = groups, family = 'binomial'))
+summary(glm(as.factor(asd) ~ Pt_0.1, data = groups, family = 'binomial'))$r.squared
+str(summary(glm(as.factor(asd) ~ Pt_0.1, data = groups, family = 'binomial')))
+install.packages('fmsb')
+library(fmsb)
+f0 <- glm(as.factor(asd) ~ Pt_0.1, data = groups, family = 'binomial')
+fmsb::NagelkerkeR2(f0)
+f0 <- glm(as.factor(asd) ~ Pt_0.1, data = groups %>% filter(race=='White'), family = 'binomial')
+fmsb::NagelkerkeR2(f0)
+groups %>% count(race)
+groups %>% filter(race=='White') %>% count(asd)
+f0 <- glm(as.factor(asd) ~ Pt_0.1, data = groups %>% filter(race=='White'), family = 'binomial')
+summary(f0)
+f0 <- glm(as.factor(asd) ~ Pt_0.5, data = groups %>% filter(race=='White'), family = 'binomial')
+summary(f0)
+f0 <- glm(as.factor(asd) ~ Pt_1, data = groups %>% filter(race=='White'), family = 'binomial')
+summary(f0)
+groups <- groups %>% mutate(asd=ifelse(group %in% c('Unaffected Controls','Unaffected Siblings','Parents'), 0, 1)) %>% mutate(asd2=ifelse(group %in% c('Unaffected Controls','Parents'), 0, 1))
+f0 <- glm(as.factor(asd) ~ Pt_1, data = groups %>% filter(!group %in% c('Unaffected Siblings')) %>% filter(race=='White'), family = 'binomial')
+groups %>% filter(!group %in% c('Unaffected Siblings')) %>% filter(race=='White') %>% count(asd2)
+groups %>% filter(!group %in% c('Unaffected Siblings')) %>% filter(race=='White') %>% count(group)
+groups %>% filter(!group %in% c('Unaffected Siblings','Parents')) %>% filter(race=='White') %>% count(group)
+f0 <- glm(as.factor(asd) ~ Pt_1, data = groups %>% filter(!group %in% c('Unaffected Siblings','Parents')) %>% filter(race=='White'), family = 'binomial')
+summary(f0)
+fmsb::NagelkerkeR2(f0)
+groups %>% filter(!group %in% c('Unaffected Siblings','Parents')) %>% filter(race=='White') %>% count(group)
+groups %>% filter(!group %in% c('Unaffected Siblings','Parents')) %>% filter(race=='White') %>% count(asd)
+groups %>% filter(!group %in% c('Unaffected Siblings','Parents')) %>% filter(race=='White') %>% count(asd2)
+
+library(qvalue)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(genpwr)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+MAC.cutoff=6
+res.dir='/Users/vkp/projects/mito_rare-variant/resources/results/single_var/'
+
+```
+## Helper Functions
+```{r}
+# Calculate lambda (measure of genomic inflation) from p-values
+lambda <- function(pvals, info = F) {
+  # # Print #INFO for entering function
+  # self.aware(parent.name = parent(nf), info=info)
+  chisq <- qchisq(1 - pvals, 1)
+  return(median(chisq)/qchisq(0.5,1))
+}
+
+# genomic control (standard)
+gc <- function(pvals, info = F){
+  # # Print #INFO for entering function
+  # self.aware(parent.name = parent(nf), info=info)
+  l <- lambda(pvals)
+  message('Lambda is: ', l)
+  pvals.gc <- pvals / sqrt(l)
+  message('sqrt Lambda is: ', sqrt(l))
+  return(pvals.gc)
+  # Note: see https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5273857/
+}
+```
+
+# Single-snp results analysis (BOLT_LMM) -----
+```{r message=FALSE, include=FALSE}
+N=414665
+# Non inverse rank-normalized phenotype
+res.nonint <- vroom(paste0(res.dir,'bolt.lmm_n450k_exomes.chr1-22.adjustedforGWA_SNPs.mtDNA_CN_m2_nonINT.stats.gz'), progress=F)
+res.nonint <- res.nonint %>% mutate(MAC=(A1FREQ*N)*2)
+res.nonint <- res.nonint %>% filter(MAC >= MAC.cutoff)
+res.nonint <- res.nonint %>% mutate(bonf.sig=ifelse(P_BOLT_LMM <= (0.05 / nrow(res.nonint)),TRUE,FALSE))
+res.nonint <- res.nonint %>% mutate(BETA.dir=ifelse(BETA>0,'+','-'))
+qobj <- qvalue(res.nonint$P_BOLT_LMM)
+res.nonint$qvalue <- qobj$qvalues
+res.nonint$fdr.sig <- qobj$significant
+
+# Inverse rank-normalized phenotype
+res.int <- vroom(paste0(res.dir, 'bolt.lmm.ukb_n450k_exomes.chr1-22.adjustedforGWA_SNPs.mtDNA_CN_m2_INT.stats.gz'), progress = T)
+res.int <- res.int %>% mutate(MAC=(A1FREQ*N)*2)
+res.int <- res.int %>% filter(MAC >= MAC.cutoff)
+res.int <- res.int %>% mutate(bonf.sig=ifelse(P_BOLT_LMM <= (0.05 / nrow(res.int)),TRUE,FALSE))
+res.int <- res.int %>% mutate(BETA.dir=ifelse(BETA>0,'+','-'))
+qobj <- qvalue(res.int$P_BOLT_LMM)
+res.int$qvalue <- qobj$qvalues
+res.int$fdr.sig <- qobj$significant
+
+# White British subset only results
+N=368805
+res.whiteBritish <- vroom(paste0(res.dir, 'bolt.lmm.ukb_n450k_exomes.chr1-22.adjustedforGWA_SNPs.mtDNA_CN_m2_INT.stats.gz'), progress = T)
+res.whiteBritish <- res.whiteBritish %>% mutate(MAC=(A1FREQ*N)*2)
+res.whiteBritish <- res.whiteBritish %>% filter(MAC >= MAC.cutoff)
+res.whiteBritish <- res.whiteBritish %>% mutate(bonf.sig=ifelse(P_BOLT_LMM <= (0.05 / nrow(res.whiteBritish)),TRUE,FALSE))
+res.whiteBritish <- res.whiteBritish %>% mutate(BETA.dir=ifelse(BETA>0,'+','-'))
+qobj <- qvalue(res.whiteBritish$P_BOLT_LMM)
+res.whiteBritish$qvalue <- qobj$qvalues
+res.whiteBritish$fdr.sig <- qobj$significant
+
+
+bonf.cutoff <- 0.05 / nrow(res.nonint)
+
+# Annotate genes (DOESN't.run2 WORK) --
+# mycoords.gr <- t.run2 %>%
+#   arrange(P_BOLT_LMM) %>% 
+#   # filter(fdr.sig==TRUE) %>%
+#   # slice_head(n=12) %>% 
+#   dplyr::select(chrom=CHR,start=BP,end=BP) %>%
+#   mutate(chrom=paste0('chr',chrom)) %>%
+#   as.data.frame() %>%
+#   makeGRangesFromDataFrame()
+# mycoords.gr <- renameSeqlevels(x = mycoords.gr, value = c('chr23'='chrX'))
+# 
+# # find overlaps
+# # compress multiple hits into one string of gene symbols
+# hits <- as_tibble(findOverlaps(mycoords.gr, genes(TxDb.Hsapiens.UCSC.hg38.knownGene)))
+# hits$gene_id <- genes(TxDb.Hsapiens.UCSC.hg38.knownGene)[hits$subjectHits]$gene_id
+# symbols <- select(org.Hs.eg.db, keys=hits$gene_id,
+#                          columns=c('ENTREZID','SYMBOL'),
+#                          keytype='ENTREZID')
+# hits <- hits %>% dplyr::inner_join(as_tibble(symbols), by=c('gene_id'='ENTREZID')) %>%
+#   dplyr::group_by(queryHits) %>%
+#   dplyr::summarise(gene_symbol=toString(SYMBOL)) %>%
+#   ungroup()
+# # assign found gene symbols
+# t.run2.fdrsig <- t.run2.fdrsig %>% mutate(gene_symbol=hits$gene_symbol)
+```
+#### QQ plot of p-values
+```{r}
+source('~/mito_rare-variant/scripts/qqunif.plot.R')
+source('~/mito_rare-variant/scripts/estlambda.R')
+
+# compute genomic inflation factors lambdas
+lambda.nonINT <- estlambda(data = res.nonint$P_BOLT_LMM)
+lambda.INT <- estlambda(data = res.int$P_BOLT_LMM)
+lambda.whiteBritish <- estlambda(data = res.whiteBritish$P_BOLT_LMM)
+
+my.pvalue.list<-list("Non-INT"=res.nonint$P_BOLT_LMM,
+                     "INT"=res.int$P_BOLT_LMM,
+                     "White British Subset"=res.whiteBritish$P_BOLT_LMM)
+qq <- qqunif.plot(pvalues = my.pvalue.list, 
+            auto.key=list(corner=c(.95,.05)),
+            draw.conf = F,
+            should.thin = T,
+            par.settings=list(superpose.symbol=list(pch=20, cex=0.5)),
+            aspect='fill',
+            xlim=c(0,8))
+# add text genomic inflation factors lambda, and plot
+# pdf('~/mito_rare-variant/analyses/lmm_adjusted/qqpot_single_variants.pdf', width = 7, height = 7)
+qq + 
+  latticeExtra::layer(lattice::panel.text(
+    x = 3,
+    y = 15,
+    label = expression(paste('Lambda mtDNA-CN:\n- Non-Inverse-Normal Transformed (Non-INT); 1.054\n- Inverse-Normal Transformed (INT); 1.048\n- White British Subset; 1.050'))
+  )) +
+  latticeExtra::layer(lattice::panel.abline(h = -log10(bonf.cutoff), lty = 2, col.line = 'red'))
+# dev.off()
+```
+
+#### QQ plot of p-values split by MAC
+```{r}
+source('~/mito_rare-variant/scripts/qqunif.plot.R')
+source('~/mito_rare-variant/scripts/estlambda.R')
+
+bonf.cutoff <- 0.05 / nrow(res.nonint)
+res <- res.nonint
+
+# compute genomic inflation factors lambdas
+lambda.nonINT <- estlambda(data = res$P_BOLT_LMM)
+
+my.pvalue.list<-list("MAC=6"=res$P_BOLT_LMM[floor(res$MAC)== 6],
+                     "MAC=7"=res$P_BOLT_LMM[floor(res$MAC)==7],
+                     "MAC=8"=res$P_BOLT_LMM[floor(res$MAC)==8],
+                     "MAC>=9"=res$P_BOLT_LMM[floor(res$MAC)>8])
+qq <- qqunif.plot(pvalues = my.pvalue.list, 
+            auto.key=list(corner=c(.95,.05)),
+            draw.conf = F,
+            should.thin = T,
+            par.settings=list(superpose.symbol=list(pch=20, cex=0.5)),
+            aspect='fill',
+            xlim=c(0,8))
+# add text genomic inflation factors lambda, and plot
+# pdf(file='~/mito_rare-variant/analyses/lmm_adjusted/qqplot_MAC_stratify_single_variants.pdf', width = 7, height = 7)
+qq + 
+  latticeExtra::layer(lattice::panel.text(
+    x = 2,
+    y = 15,
+    label = expression(paste(lambda, ' mtDNA-CN: \nMAC=6; 1.05\nMAC=7; 1.03\nMAC=8; 1.03\nMAC>=9; 1.06'))
+  )) +
+  # latticeExtra::layer(lattice::panel.abline(h = -log10(bonf.cutoff), lty = 2, col.line = 'red'))
+  latticeExtra::layer(latticeExtra::panel.ablineq(label='Bonferroni Cutoff: p ≤ 7.4 x 10^-9', h = -log10(bonf.cutoff), lty = 2, col.line = 'red', pos=3, at = 0.4, fontfamily = 'sserif', cex=0.9))
+# dev.off()
+```
+
+#### Experiment Wide Significant hits
+```{r}
+res <- res.nonint
+bonf.cutoff = (0.05 / nrow(res))
+
+# table of genes (with bonf annotated)
+res.expsig <- res %>% arrange(P_BOLT_LMM) %>% filter(P_BOLT_LMM <= bonf.cutoff) %>% 
+  dplyr::select(SNP,CHR,BP,ALLELE1,ALLELE0,A1FREQ,BETA,SE,MAC,bonf.sig,P_BOLT_LMM,qvalue)
+
+
+res.expsig$SE <- as.numeric(res.expsig$SE)
+
+# add genes (manual lookup since only 11)
+res.expsig$`Gene(s)` <- c('SAMHD1','SIRPA','SPAG4','JAK2','TWNK','TOP3A','ACSL1','SAMHD1','AHCY','PM20D1','AFAP1L1')
+
+res.expsig <- res.expsig %>% dplyr::select(-bonf.sig)
+
+res.expsig <- res.expsig %>% dplyr::select(SNP, CHR, BP, ALLELE0, ALLELE1,
+                                    BETA, SE, MAC, P_BOLT_LMM, qvalue,
+                                    `Gene(s)`)
+
+# Compute proportion variance explained
+# equation maf_ <- 2*(beta^2)*(maf*(1-maf)); se2 <- (se^2)*(2*N)*(maf*(1-maf))
+# pve = maf_ / (maf_ + se2)
+# alternatively, simplifying original equation gives beta^2 / (beta^2 + se^2 * N)
+# source for all of this is /Users/vkp/projects/mito_rare-variant/PVE_Calculation_pone.0120758.s001.pdf
+res.expsig$pve <- (res.expsig$BETA^2) / (res.expsig$BETA^2 + res.expsig$SE^2 * 414665)
+
+# Set PVE for SPAG4 to NA (it's in linkage disequilibrium with SAMHD1)
+res.expsig$pve[which(res.expsig$`Gene(s)`=='SPAG4')] <- NA
+
+res.expsig$func <- c('p.Asp585Asn',
+                     'Intronic variant',
+                     'Intronic variant',
+                     'p.Val617Ile',
+                     'p.Arg601Gln',
+                     'Intronic variant',
+                     'Intronic variant',
+                     'p.Arg531Ser',
+                     '3 \' UTR variant',
+                     'Intronic variant',
+                     'Intronic variant')
+
+
+# display table
+# res.expsig %>% gt() %>%
+#   tab_header(title='Single Variants at Experiment-Wide Significance', 
+#              subtitle = paste0('Bonferroni cutoff = ', 
+#                                format(bonf.cutoff,scientific = T, digits = 2))) %>%
+#   fmt_scientific(columns = c('P_BOLT_LMM', 'qvalue'), decimals = 2) %>%
+#   # fmt_number(vars(A1FREQ),decimals=5, drop_trailing_zeros = T) %>%
+#   # fmt_number(vars(BETA,SE),decimals=2, drop_trailing_zeros = T) %>%
+#   # fmt_number(vars(MAC),decimals=0, drop_trailing_zeros = T) %>%
+#   fmt_number(columns = c('A1FREQ'),decimals=5, drop_trailing_zeros = T) %>%
+#   fmt_number(columns = c('BETA','SE'),decimals=2, drop_trailing_zeros = T) %>%
+#   fmt_number(columns = c('MAC'),decimals=0, drop_trailing_zeros = T) %>%
+#   cols_label(P_BOLT_LMM='P-Value BOLT-LMM') %>%
+#   tab_style(style = list(cell_text(style='italic')),
+#             locations=cells_body(columns=c(`Gene(s)`))) %>% 
+#   tab_style(
+#     style = list(cell_text(color = "red")),
+#     locations = cells_body(columns = c('BETA'),
+#                            rows = BETA < 0)) %>% 
+#    gt_theme_nytimes()
+#   # gtsave('~/projects/mito_rare-variant/analyses/lmm_adjusted/tmp.rtf')
+
+res.expsig %>% arrange(P_BOLT_LMM) %>% gt() %>%
+  fmt_scientific(columns = c('P_BOLT_LMM', 'qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('BETA','SE'),decimals=2, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('MAC'),decimals=0, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('BP'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('pve'), decimals=3) %>% 
+  cols_hide(columns = 'SNP') %>% 
+  cols_move(columns = 'pve', after = 'func') %>% 
+  # cols_merge_uncert(col_val=BETA, col_uncert = SE) %>% 
+  cols_label(CHR='Chromosome',
+             BP='Position (bp)',
+             ALLELE1='Effect Allele',
+             ALLELE0='Reference Allele',
+             BETA='Effect Size',
+             SE='Standard Error',
+             MAC='Minor Allele Count',
+             P_BOLT_LMM='P-value',
+             qvalue='Q-value',
+             `Gene(s)`='Locus / Gene',
+             pve='Proportion Variance Explained',
+             func='Functional Effect') %>%
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c(`Gene(s)`))) %>% 
+  tab_style(
+    style = list(cell_text(color = "red")),
+    locations = cells_body(columns = c('BETA'),
+                           rows = BETA < 0)) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  cols_align(align='left', columns = c(BP, pve)) %>%
+  cols_align(align='center', columns = c(CHR)) %>%
+  tab_footnote(footnote = 'Effect sizes and standard errors are in units of 
+               standard deviation of the scaled mtDNA-CN distribution (mean = 0, std. dev. = 1)',
+               locations = cells_column_labels(columns = c('BETA','SE'))) %>% 
+  tab_footnote(footnote = 'Genome coordinates reported in GRCh38',
+               locations = cells_column_labels(columns = 'BP')) %>% 
+  tab_footnote(footnote = md('Variants present in a shared set of 262 individuals, as part of a rare, shared ancestral haplotype. _SPAG4_ in linkage disequilibrium with _SAMHD1_.'),
+               locations = list(cells_body(columns = c('BP'),
+                                      rows = BP == '36893060'),
+                                cells_body(columns = c('BP'),
+                                      rows = BP == '35619007'),
+                                cells_body(columns = c('pve'),
+                                      rows = `Gene(s)` == 'SPAG4'))) %>% 
+  tab_footnote(footnote = 'Proportion of variance (PVE) in mtDNA-CN explained by variant, computed as PVE = Effect-Size^2 / (Effect-Size^2 + Std.-Error^2 * Sample-Size) (n=414665)',
+               locations = cells_column_labels(columns = 'pve')) %>% 
+  opt_footnote_marks(marks = 'letters') %>% 
+  grand_summary_rows(columns = pve, fns = list(Total = ~sum(., na.rm=T)),
+                     formatter = fmt_percent, decimals = 3)
+  
+   # gt_theme_excel()
+  # gtsave('~/projects/mito_rare-variant/analyses/lmm_adjusted/tmp.rtf')
+
+```
+
+# Are MAC 6-7 driven by outliers of CN or ancestry or relatedness?
+```{r}
+require(ggpubr)
+require(dplyr)
+require(readr)
+require(hrbrthemes)
+
+# read in data on 4 vars with MAC 6-7
+c1 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c1_205848004_A_C_HET.ukb.data.tsv') # PM20D1
+c1 <- c1 %>% dplyr::select(var=`1:205848004:A:C_HET`, arrayCN_PCA_m2) %>% mutate(var=rep('1:205848004:A:C_HET', nrow(c1)))
+c4 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c4_184766776_G_A_HET.ukb.data.tsv') # ACSL1
+c4 <- c4 %>% dplyr::select(var=`4:184766776:G:A_HET`, arrayCN_PCA_m2) %>% mutate(var=rep('4:184766776:G:A_HET', nrow(c4)))
+c5 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c5_149332902_C_A_HET.ukb.data.tsv') # AFAP1L1
+c5 <- c5 %>% dplyr::select(var=`5:149332902:C:A_HET`, arrayCN_PCA_m2) %>% mutate(var=rep('5:149332902:C:A_HET', nrow(c5)))
+c20 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c20_34280961_C_T.ukb.data.tsv') # AHCY
+c20 <- c20 %>% dplyr::select(var=`20:34280961:C:T_HET`, arrayCN_PCA_m2) %>% mutate(var=rep('20:34280961:C:T_HET', nrow(c20)))
+c <- bind_rows(c1, c4, c5, c20)
+
+# Plot
+g <- c %>% ggplot(aes(x=as.factor(var), y=arrayCN_PCA_m2)) + geom_boxplot() + geom_point(size=3, color='red', shape=21) + coord_flip() + xlab('Single Variant') + ylab('mtDNA-CN (SD)') + theme_ipsum_rc(axis_title_just = 'c', axis_title_size = 14)
+ggsave(filename = '~/mito_rare-variant/papers/mito_exomes/supplementary/single_variant_ultra-rare.png', plot=g, device = 'png', dpi = 'print')
+
+# Alternate Plot
+c1 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c1_205848004_A_C_HET.ukb.data.tsv') # PM20D1
+c4 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c4_184766776_G_A_HET.ukb.data.tsv') # ACSL1
+c5 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c5_149332902_C_A_HET.ukb.data.tsv') # AFAP1L1
+c20 <- read_tsv('~/mito_rare-variant/resources/results/single_var/c20_34280961_C_T.ukb.data.tsv') # AHCY
+c1.g <- c1 %>% ggplot(aes(x=`1:205848004:A:C_HET`,y=arrayCN_PCA_m2)) + geom_boxplot(width=0.5) + geom_rug(sides='l') + theme_minimal() + ylab('mtDNA CN (SD)')
+c4.g <- c4 %>% ggplot(aes(x=`4:184766776:G:A_HET`,y=arrayCN_PCA_m2)) + geom_boxplot(width=0.5) + geom_rug(sides='l') + theme_minimal() + ylab('mtDNA CN (SD)') #theme(axis.title.y = element_blank())
+c5.g <- c5 %>% ggplot(aes(x=`5:149332902:C:A_HET`,y=arrayCN_PCA_m2)) + geom_boxplot(width=0.5) + geom_rug(sides='l') + theme_minimal() + ylab('mtDNA CN (SD)') #theme(axis.title.y = element_blank())
+c20.g <- c20 %>% ggplot(aes(x=`20:34280961:C:T_HET`,y=arrayCN_PCA_m2)) + geom_boxplot(width=0.5) + geom_rug(sides='l') + theme_minimal() + ylab('mtDNA CN (SD)') #theme(axis.title.y = element_blank())
+
+ggarrange(plotlist=list(c1.g, c4.g, c5.g, c20.g), nrow = 1, ncol = 4, labels = 'AUTO')
+
+# Table of key parameters related to variant carriers 
+# showing that association is not driven by outlier CN, ancestry, relatedness
+k <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n428k.Subset_removed.nonwhites.nonconsent.exomes_covar_AnnotatedDataFrame.rds')
+k <- k@data %>% as_tibble()
+n428k <- as.numeric(readLines('~/mito_rare-variant/resources/n428k.exomes.nonwhites_nonconsent.removed.sample.IIDs.list'))
+# NOTE: 428k is samples included in study (i.e. removes nonwhites, nonconsented),
+# but includes samples w/ missing mtDNA-CN, so need to filter to !is.na(mtDNA-CN) to get to n=415,422
+
+samp.cau <- read_csv('~/mito_rare-variant/resources/sample_ids_Caucasian.csv')
+samp.cau <- samp.cau %>% dplyr::select(gen.cau=column)
+
+c1 %>%
+  dplyr::select(IID, age, sex, arrayCN_PCA_m2, in.white.British.ancestry.subset, used.in.pca.calculation, PC1, PC2) %>%
+  filter(IID %in% n428k) %>%
+  filter(!is.na(arrayCN_PCA_m2)) %>% 
+  mutate(gen.cau=ifelse(IID %in% samp.cau$gen.cau, 1, 0)) %>% 
+  dplyr::left_join(k %>% dplyr::select(sample.id, wes.batch), by=c('IID'='sample.id')) # get wes.batch
+
+c4 %>% 
+  dplyr::select(IID, age, sex, arrayCN_PCA_m2, in.white.British.ancestry.subset, used.in.pca.calculation, PC1, PC2) %>%
+  dplyr::filter(IID %in% n428k) %>% 
+  dplyr::filter(!is.na(arrayCN_PCA_m2)) %>% 
+  mutate(gen.cau=ifelse(IID %in% samp.cau$gen.cau, 1, 0)) %>% 
+  left_join(k %>% dplyr::select(sample.id, wes.batch), by=c('IID'='sample.id')) # get wes.batch
+
+c5 %>% 
+  dplyr::select(IID, age, sex, arrayCN_PCA_m2, in.white.British.ancestry.subset, used.in.pca.calculation, PC1, PC2) %>%
+  dplyr::filter(IID %in% n428k) %>% 
+  dplyr::filter(!is.na(arrayCN_PCA_m2)) %>% 
+  mutate(gen.cau=ifelse(IID %in% samp.cau$gen.cau, 1, 0)) %>% 
+  left_join(k %>% dplyr::select(sample.id, wes.batch), by=c('IID'='sample.id')) # get wes.batch
+
+c20 %>% 
+  dplyr::select(IID, age, sex, arrayCN_PCA_m2, in.white.British.ancestry.subset, used.in.pca.calculation, PC1, PC2) %>%
+  dplyr::filter(IID %in% n428k) %>% 
+  dplyr::filter(!is.na(arrayCN_PCA_m2)) %>% 
+  mutate(gen.cau=ifelse(IID %in% samp.cau$gen.cau, 1, 0)) %>% 
+  dplyr::left_join(k %>% dplyr::select(sample.id, wes.batch), by=c('IID'='sample.id')) # get wes.batch
+
+```
+
+# FDR sig hits
+```{r}
+qvalue.cutoff = 0.01
+
+# fdr significant at 5% FDR
+res.fdrsig <- res %>% arrange(P_BOLT_LMM) %>% filter(qvalue <= qvalue.cutoff) %>% 
+  dplyr::select(SNP,CHR,BP,ALLELE1,ALLELE0,A1FREQ,BETA,SE,MAC,bonf.sig,P_BOLT_LMM,qvalue)
+
+
+# # get overlapping gene symbols
+# mycoords.gr <- res.fdrsig %>%
+#   arrange(P_BOLT_LMM) %>% 
+#   # filter(P_BOLT_LMM <= bonf.cutoff) %>%
+#   filter(qvalue <= qvalue.cutoff) %>%
+#   dplyr::select(chrom=CHR,start=BP,end=BP) %>%
+#   mutate(chrom=paste0('chr',chrom)) %>%
+#   as.data.frame() %>%
+#   makeGRangesFromDataFrame()
+# 
+# # find overlaps
+# # compress multiple hits into one string of gene symbols
+# hits <- as_tibble(findOverlaps(mycoords.gr, genes(TxDb.Hsapiens.UCSC.hg38.knownGene)))
+# hits$gene_id <- genes(TxDb.Hsapiens.UCSC.hg38.knownGene)[hits$subjectHits]$gene_id
+# symbols <- select(org.Hs.eg.db, keys=hits$gene_id,
+#                          columns=c('ENTREZID','SYMBOL'),
+#                          keytype='ENTREZID')
+# hits <- hits %>% inner_join(as_tibble(symbols), by=c('gene_id'='ENTREZID')) %>%
+#   group_by(queryHits) %>%
+#   summarise(gene_symbol=toString(SYMBOL)) %>%
+#   ungroup()
+# # assign found gene symbols
+# res.fdrsig <- res.fdrsig %>% mutate(gene_symbol=hits$gene_symbol)
+
+# add genes (manual lookup since only 19)
+res.fdrsig$`Gene(s)` <- c('SAMHD1','SIRPA','SPAG4','JAK2','TWNK','TOP3A','ACSL1',
+                          'SAMHD1','AHCY','PM20D1','AFAP1L1',
+                          'MINDY3','WDR64','TFAM','LONP1','MYO15A',
+                          'MINDY3','LRRC43','P2RY2')
+res.fdrsig$SE <- as.numeric(res.fdrsig$SE)
+
+# display table
+res.fdrsig %>% gt() %>%
+  tab_header(title='Single Variants at 1% False Discovery Rate', 
+             subtitle = paste0('Q-value cutoff = ', 
+                               format(qvalue.cutoff,scientific = T, digits = 2))) %>%
+  fmt_scientific(columns = c('P_BOLT_LMM', 'qvalue'), decimals = 2) %>%
+  # fmt_number(vars(A1FREQ),decimals=5, drop_trailing_zeros = T) %>%
+  # fmt_number(vars(BETA,SE),decimals=2, drop_trailing_zeros = T) %>%
+  # fmt_number(vars(MAC),decimals=0, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('A1FREQ'),decimals=5, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('BETA','SE'),decimals=2, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('MAC'),decimals=0, drop_trailing_zeros = T) %>%
+  cols_label(P_BOLT_LMM='P-Value BOLT-LMM') %>%
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c(`Gene(s)`))) %>% 
+  tab_style(
+    style = list(cell_text(color = "red")),
+    locations = cells_body(columns = c('BETA'),
+                           rows = BETA < 0)) %>% 
+   gt_theme_nytimes()
+  # gtsave('~/projects/mito_rare-variant/analyses/lmm_adjusted/tmp.rtf')
+```
+
+
+Manhattan plot of single-snp results
+```{r}
+library(ggrepel)
+library(ggtext)
+# https://www.r-graph-gallery.com/101_Manhattan_plot.html
+gwasResults <- res %>% dplyr::select(SNP, CHR, BP, P=P_BOLT_LMM)
+gwasResults <- gwasResults %>% filter(P <= 0.05)
+
+snpsOfInterest.bonfsig <-
+  res %>% filter(P_BOLT_LMM <= bonf.cutoff) %>% dplyr::select(SNP)
+snpsOfInterest.fdr0.15 <- 
+  res %>% filter(qvalue <= 0.15) %>% dplyr::select(SNP)
+
+# Prepare the dataset
+don <- gwasResults %>% 
+  # Compute chromosome size
+  group_by(CHR) %>% 
+  dplyr::summarise(chr_len=max(BP)) %>% 
+  # Calculate cumulative position of each chromosome
+  dplyr::mutate(tot=cumsum(chr_len)-chr_len) %>%
+  dplyr::select(-chr_len) %>%
+  # Add this info to the initial dataset
+  left_join(gwasResults, ., by=c("CHR"="CHR")) %>%
+  # Add a cumulative position of each SNP
+  arrange(CHR, BP) %>%
+  dplyr::mutate( BPcum=BP+tot) %>%
+  # Add highlight and annotation information
+  dplyr::mutate(is_highlight.1=ifelse(SNP %in% snpsOfInterest.bonfsig$SNP, "yes", "no")) %>% 
+  # dplyr::mutate(is_highlight.1=ifelse(SNP %in% snpsOfInterest.fdr0.15$SNP, "yes", "no")) %>% 
+  # dplyr::mutate(is_highlight.2=ifelse((SNP %in% snpsOfInterest.fdr0.15$SNP) & ~(SNP %in% snpsOfInterest.bonfsig$SNP), "yes", "no"))
+  left_join(res.fdrsig, by='SNP') %>% 
+  dplyr::select(SNP, CHR=CHR.x,BP=BP.x,P,tot,BPcum,is_highlight.1,`Gene(s)`)
+
+# Prepare X axis
+axisdf <- don %>% group_by(CHR) %>%
+  dplyr::summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+# Gene names for annotated hits
+# genes <- c('DNM3','D2HGDH','ADAM29','SIRPA','SPAG4','SAMHD1')
+# genes <- t.run2.fdrsig$gene_symbol
+# don$genes <- rep('', nrow(don))
+# don$genes[don$is_highlight.1=='yes'] <- genes
+
+g <- ggplot(don, aes(x=BPcum, y=-log10(P))) +
+    # Show all points
+    geom_point( aes(color=as.factor(CHR)), alpha=0.8, size=0.5) +
+    scale_color_manual(values = rep(c("black", "grey"), 23 )) +
+    # custom X axis:
+    scale_x_continuous(expand = expansion(), label=axisdf$CHR,breaks= axisdf$center ) +
+    scale_y_continuous(expand = c(0, 0) , limits = c(0,30)) + # remove space between plot area and x axis
+    geom_hline(yintercept = -log10(bonf.cutoff), color='red', linetype='dashed') +
+    # geom_hline(yintercept = -log10(perm.cutoff), color='blue', linetype='dashed', size=0.3) + # permutation based p-value cutoff
+    # geom_hline(yintercept = -log10(2e-07), color='lightblue', linetype='dashed', size=0.3) + # FDR < 15%  
+    # Add highlighted points
+    geom_point(data=subset(don, is_highlight.1=="yes"), color="orange", size=1.2) +
+    # geom_point(data=subset(don, is_highlight.q=="yes"), color="orange", size=1.5) +
+    # Add label using ggrepel to avoid overlapping
+    geom_label_repel(data=subset(don, is_highlight.1=="yes"), aes(label=`Gene(s)`), size=1.5) +
+    # Custom theme:
+    theme_bw() +
+    theme(
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text = element_text(size=5),
+      axis.title = element_text(size=8),
+      plot.subtitle = element_markdown(size=8, lineheight = 1.1)
+    ) +
+    xlab('Chromosome') +
+    labs(title='Rare Single Variants Associated with Mitochondrial Copy Number',
+       subtitle = "Type I Error Cutoff (alpha):\n   <b style='color:#FF0000'>  7.4e-09 (Bonferroni)</b>")
+       # \n  <b style='color:#0000FF'>   7.1e-09 (Permutation-based)\n</b>  <b style='color:#00CCFF'>  1.5e-07 (FDR <= 15%)\n</b>")
+g
+# ggsave(plot = g, filename='~/projects/mito_rare-variant/analyses/n415k_lmm_manhattan.pdf',
+#        device = 'pdf', dpi = 'retina', width = 7, height = 4, units = 'in')
+```
+
+## Why are betas positive?
+Compare positive enrichment between bolt results of:
+- non INT
+- INT
+- White British subset
+```{r}
+test <- res %>%
+  mutate(P=-log10(P_BOLT_LMM)) %>% 
+  dplyr::select(SNP,A1FREQ,P,qvalue,BETA,dir=BETA.dir)
+test$dir <- as.factor(test$dir)
+
+# pval <- emdbook::lseq(1.15e-08,0.5,1000)
+# pval <- seq(from=7.94,to=0.3,length.out=500)
+pval <- seq(from=-log10(bonf.cutoff),to=-log10(0.05),length.out=500)
+n.pos <- rep(NA, length(pval))
+n.neg <- rep(NA, length(pval))
+prop.test.p.val <- rep(NA, length(pval))
+prop.test.ci_low <- rep(NA, length(pval))
+prop.test.ci_high <- rep(NA, length(pval))
+prop.pos <- rep(NA, length(pval))
+
+for (i in 1:length(pval)) {
+  message('i: ', i)
+  test_ <- test %>% filter(P >= pval[i])
+  n.pos[i] <- length(which(test_$dir=='+'))
+  n.neg[i] <- nrow(test_) - n.pos[i]
+  if(nrow(test_) > 30){
+    tmp <-
+      prop.test(n.pos[i], nrow(test_), p = 0.5, alternative = 'two.sided')
+    prop.test.p.val[i] <- tmp$p.value
+    prop.test.ci_low[i] <- tmp$conf.int[1]
+    prop.test.ci_high[i] <- tmp$conf.int[2]
+  } else {
+    tmp <- binom.test(n.pos[i],nrow(test_), p = 0.5, alternative = 'two.sided')
+    prop.test.p.val[i] <- tmp$p.value
+    prop.test.ci_low[i] <- tmp$conf.int[1]
+    prop.test.ci_high[i] <- tmp$conf.int[2]
+  }
+}
+
+prop.pos <- n.pos / (n.pos + n.neg)
+prop.neg <- n.neg / (n.pos + n.neg)
+test_ <- tibble(pval, n.pos, n.neg, prop.pos, prop.neg, prop.test.p.val, 
+                prop.test.ci_low, prop.test.ci_high)
+test_rare <- test_
+
+# depending on which res was chosen:
+test_rare.nonint <- test_rare
+test_rare.int <- test_rare
+test_rare.WhiteBritish <- test_rare
+```
+
+# Plot beta enrichment
+```{r}
+test_rare %>% # plot 
+  ggplot() +
+  geom_hline(yintercept = 0.5, color='red', linetype='dashed') +
+  geom_line(data=test_, aes(x=pval, y=prop.pos)) +
+  geom_ribbon(data=test_, 
+              aes(x=pval, y=prop.pos, ymin=prop.test.ci_low,
+              ymax=prop.test.ci_high),
+              alpha=0.5) +
+  xlab('-log10(p-value cutoff)') +
+  ylab('Proportion of (+) BETA [95% CI]')
+
+# Plot all three result sets together
+test_rare %>% # plot 
+  ggplot() +
+  geom_hline(yintercept = 0.5, color='red', linetype='dashed') +
+  geom_line(data=test_rare.nonint, aes(x=pval, y=prop.pos, color='Non INT')) +
+  geom_line(data=test_rare.int, aes(x=pval, y=prop.pos, color='INT')) +
+  geom_line(data=test_rare.WhiteBritish, aes(x=pval, y=prop.pos, color='White British Subset')) +
+  scale_colour_brewer("", 
+                      breaks = c("Non INT", "INT", "White British Subset"),
+                      palette = 'RdBu')+
+  # scale_colour_manual("", 
+  #                     breaks = c("Non INT", "INT", "White British Subset"),
+  #                     values = c("blue", "red", "grey")) +
+  # geom_ribbon(data=test_, 
+  #             aes(x=pval, y=prop.pos, ymin=prop.test.ci_low,
+  #             ymax=prop.test.ci_high),
+  #             alpha=0.5) +
+  xlab('-log10(p-value cutoff)') +
+  ylab('Proportion of (+) BETA') +
+  hrbrthemes::theme_ft_rc(axis_title_size = 12, plot_title_size = 15) +
+  labs(title='Proportion of positive betas by p-value cutoff')
+
+# scale_x_log10()
+# test_ %>% 
+#   ggplot() +
+#     geom_line(data=test_, aes(x=pval, y=-log10(prop.test.p.val)), color='red')
+```
+
+
+# Common variant BOLT Beta Direction analysis
+```{r}
+res.common <- getobj('/Users/vkp/projects/mito_rare-variant/resources/results/common.variant.gwas.bolt_lmm.res.p_lt0.05.rds')
+res.common$A1FREQ <-
+  ifelse(res.common$A1FREQ > 0.5, 1 - res.common$A1FREQ, res.common$A1FREQ)
+res.common$BETA <-
+  ifelse(res.common$A1FREQ > 0.5, -1*res.common$BETA, res.common$BETA)
+res.common <- res.common %>% mutate(BETA.dir=ifelse(BETA>0,'+','-'))
+```
+
+Do the same for common variants
+```{r}
+test <- res.common %>%
+  mutate(P=-log10(P_BOLT_LMM)) %>% 
+  dplyr::select(SNP,A1FREQ,P,BETA,dir=BETA.dir)
+test$dir <- as.factor(test$dir)
+
+# pval <- emdbook::lseq(1.15e-08,0.5,1000)
+# pval <- seq(from=7.94,to=0.3,length.out=500)
+pval <- seq(from=-log10(3.946894e-08),to=-log10(0.05),length.out=500)
+n.pos <- rep(NA, length(pval))
+n.neg <- rep(NA, length(pval))
+prop.test.p.val <- rep(NA, length(pval))
+prop.test.ci_low <- rep(NA, length(pval))
+prop.test.ci_high <- rep(NA, length(pval))
+prop.pos <- rep(NA, length(pval))
+
+for (i in 1:length(pval)) {
+  message('i: ', i)
+  test_ <- test %>% filter(P >= pval[i])
+  n.pos[i] <- length(which(test_$dir=='+'))
+  n.neg[i] <- nrow(test_) - n.pos[i]
+  if(nrow(test_) > 30){
+    tmp <-
+      prop.test(n.pos[i], nrow(test_), p = 0.5, alternative = 'two.sided')
+    prop.test.p.val[i] <- tmp$p.value
+    prop.test.ci_low[i] <- tmp$conf.int[1]
+    prop.test.ci_high[i] <- tmp$conf.int[2]
+  } else {
+    tmp <- binom.test(n.pos[i],nrow(test_), p = 0.5, alternative = 'two.sided')
+    prop.test.p.val[i] <- tmp$p.value
+    prop.test.ci_low[i] <- tmp$conf.int[1]
+    prop.test.ci_high[i] <- tmp$conf.int[2]
+  }
+}
+
+prop.pos <- n.pos / (n.pos + n.neg)
+prop.neg <- n.neg / (n.pos + n.neg)
+test_ <- tibble(pval, n.pos, n.neg, prop.pos, prop.neg, prop.test.p.val, 
+                prop.test.ci_low, prop.test.ci_high)
+test_common <- test_
+test_ %>% # plot 
+  ggplot() +
+  geom_hline(yintercept = 0.5, color='red', linetype='dashed') +
+  geom_line(data=test_, aes(x=pval, y=prop.pos)) +
+  geom_ribbon(data=test_, 
+              aes(x=pval, y=prop.pos, ymin=prop.test.ci_low,
+              ymax=prop.test.ci_high),
+              alpha=0.5) +
+  xlab('-log10(p-value cutoff)') +
+  ylab('Proportion of (+) BETA [95% CI]')
+  # scale_x_log10()
+# test_ %>% 
+#   ggplot() +
+#     geom_line(data=test_, aes(x=pval, y=-log10(prop.test.p.val)), color='red')
+```
+
+# Rare & Common variant prop positive beta plots
+```{r}
+test_rare$test_set <- rep('Rare', nrow(test_rare))
+test_common$test_set <- rep('Common', nrow(test_common))
+test <- rbind(test_rare, test_common)
+test$test_set <- as.factor(test$test_set)
+test_rare %>% 
+  ggplot() +
+  geom_hline(yintercept = 0.5, color='red', linetype='dashed') +
+  geom_line(data=test, aes(x=pval, y=prop.pos)) +#, color=test_set)) +
+  geom_ribbon(data=test_rare, 
+              aes(x=pval, y=prop.pos, ymin=prop.test.ci_low,
+              ymax=prop.test.ci_high),#, fill=test_set),
+              alpha=0.5) +
+  xlab('-log10(p-value cutoff)') +
+  ylab('Proportion of (+) BETA [95% CI]') +
+  scale_color_manual(values = c('blue','red')) +
+  scale_fill_manual(values = c('blue','red')) +
+  labs(title='Proportion of (+) Betas \nas a function of Variant Association Significance') +
+  theme_ipsum_rc()
+```
+
+
+
+# Aggregate rare-variant analysis ---
+# Compile results across varsets (Run Once)
+```{r eval=FALSE, include=FALSE}
+# OLD, need to update
+if(FALSE) {
+  source('~/mito_rare-variant/scripts/process_res.R')
+  library(qvalue)
+  varsets <- list.dirs('.', recursive = F)
+  res = list()
+  for (i in 1:length(varsets)) {
+    res[i] <-
+      f2(
+        assoc.dir = varsets[i],
+        AF.max = af.max[i],
+        txdb = TxDb.Hsapiens.UCSC.hg38.knownGene,
+        test = 'SMMAT',
+        plot = F
+      )
+    res[[i]]$varset = rep(varsets[i], nrow(res[[i]]))
+  }
+  t.run2.aggr <- bind_rows(res)
+  t.run2.aggr <- t.run2.aggr %>% filter(err != 1) # remove errs
+  qobj <- qvalue(t.run2.aggr$pval_SMMAT)
+  t.run2.aggr$qvalue <- qobj$qvalues
+  
+  # bonferroni
+  bonf.cutoff <- 0.05 / (19397 * 2)
+  
+  # variants
+  t.run2.aggr %>%
+    arrange(pval_SMMAT) %>%
+    filter(pval_SMMAT <= (0.05 / (19397 * 2))) %>%
+    distinct(gene, .keep_all = T)
+  
+  t.run2.aggr %>%
+    arrange(pval_SMMAT) %>%
+    filter(pval_SMMAT <= (0.05 / (19397 * 2))) %>%
+    distinct(gene, .keep_all = T)
+}
+```
+# aggregate results (new1 (now old))
+```{r}
+header <- stringr::str_split(readLines('/Users/vkp/mito_rare-variant/resources/results/burden/header.txt'), '\t')[[1]]
+res <- read_tsv('/Users/vkp/mito_rare-variant/resources/results/burden/res.all1.txt')
+colnames(res) <- header
+qobj <- qvalue(res$pval_SMMAT)
+res$qvalue <- qobj$qvalues
+
+bonf.cutoff_aggr <- 0.05 / nrow(res)
+corr.cutoff_aggr <- 0.05 / 18323 # based on unique cadd 18 0.001 genes tested at cfreq >= 0.0001
+res.bonf_agg <- res %>% 
+  filter(pval_SMMAT <= bonf.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T)
+
+res.corr_agg <- res %>% 
+  filter(pval_SMMAT <= corr.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T)
+
+# analyze cadd18 0.001
+cadd18_0.001 <- 
+  read_tsv('~/mito_rare-variant/resources/results/burden/variants_in_cds_CADDphred_18.SMMAT.AF.max.0.001/rv_assoc.aggr.variants_in_cds_CADDphred_18.SMMAT.AF.max.0.001.chr_combined.txt')
+cadd18_0.001$qvalue <- qvalue(cadd18_0.001$pval_SMMAT)$qvalues
+
+```
+# aggregate results (new2)
+```{r}
+# uses nonsyn.impact_mod_high, nonsyn.impact_mod_high_CADD18, nonsyn.impact_high_pLOF variant sets
+require(dplyr)
+require(readr)
+require(qvalue)
+res <- read_tsv('/Users/vkp/mito_rare-variant/resources/results/burden/res.all.nonsyn.impact_mod_high_plus_nonsyn.impact_mod_high_CADD18_plus_nonsyn.impact_high_pLOF.txt')
+qobj <- qvalue(res$pval_SMMAT)
+res$qvalue <- qobj$qvalues
+
+bonf.cutoff_aggr <- 0.05 / nrow(res)
+corr.cutoff_aggr_wide <- 0.05 / length(unique(res$gene)) # based on unique cadd 18 0.001 genes tested at cfreq >= 0.0001
+# corr.cutoff_aggr <- 0.05 / (length(unique(res$gene))*4) # based on unique cadd 18 0.001 genes tested at cfreq >= 0.0001
+corr.cutoff_aggr_narrow <- 0.05 / (18557 * 4)
+
+res.bonf_agg <- res %>% # bonf-sig
+  filter(pval_SMMAT <= bonf.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_wide <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_narrow <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr_narrow) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_marginal <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr_wide) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% 
+  slice(lower = 11, upper = 13) %>% filter(gene !='TLDC2')
+
+res.fdr_0.1 <- res %>% # fdr 10%
+    filter(qvalue <= 0.1) %>% 
+    arrange(pval_SMMAT) %>% 
+    distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.fdr_0.3 <- res %>% # fdr 30%
+    filter(qvalue <= 0.3) %>% 
+    arrange(pval_SMMAT) %>% 
+    distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+```
+
+# correlation between variant set p-values
+```{r}
+library(dplyr)
+library(readr)
+# A = 'nonsyn_mod_high'
+# B = 'nonsyn_mod_high_CADD18
+# C = 'nonsyn_high_pLoF'
+res.0.01_A = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr_all.txt')
+res.0.001_A = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.001.chr_all.txt')
+res.0.0001_A = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.1e-04.chr_all.txt')
+res.0.01_B = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high_CADD18/rv_assoc.aggr.nonsyn.impact_mod_high_CADD18.SMMAT.AF.max.0.01.chr_all.txt')
+res.0.001_B = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high_CADD18/rv_assoc.aggr.nonsyn.impact_mod_high_CADD18.SMMAT.AF.max.0.001.chr_all.txt')
+res.0.0001_B = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_mod_high_CADD18/rv_assoc.aggr.nonsyn.impact_mod_high_CADD18.SMMAT.AF.max.1e-04.chr_all.txt')
+res.0.01_C = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_high_pLOF/rv_assoc.aggr.nonsyn.impact_high_pLOF.SMMAT.AF.max.0.01.chr_all.txt')
+res.0.001_C = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_high_pLOF/rv_assoc.aggr.nonsyn.impact_high_pLOF.SMMAT.AF.max.0.001.chr_all.txt')
+res.0.0001_C = read_table('~/mito_rare-variant/resources/results/burden/nonsyn.impact_high_pLOF/rv_assoc.aggr.nonsyn.impact_high_pLOF.SMMAT.AF.max.1e-04.chr_all.txt')
+
+res.0.01_A$varset <- 'Nonsyn_Impact_Mod_High_MAF_0.01'
+res.0.001_A$varset <- 'Nonsyn_Impact_Mod_High_MAF_0.001'
+res.0.0001_A$varset <- 'Nonsyn_Impact_Mod_High_MAF_0.0001'
+
+res.0.01_B$varset <- 'Nonsyn_Impact_Mod_High_CADD18_MAF_0.01'
+res.0.001_B$varset <- 'Nonsyn_Impact_Mod_High_CADD18_MAF_0.001'
+res.0.0001_B$varset <- 'Nonsyn_Impact_Mod_High_CADD18_MAF_0.0001'
+
+res.0.01_C$varset <- 'Nonsyn_Impact_High_pLOF_MAF_0.01'
+res.0.001_C$varset <- 'Nonsyn_Impact_High_pLOF_MAF_0.001'
+res.0.0001_C$varset <- 'Nonsyn_Impact_High_pLOF_MAF_0.0001'
+
+res.all <- rbind(res.0.01_A, res.0.001_A, res.0.0001_A, res.0.01_B, res.0.001_B, 
+                 res.0.0001_B, res.0.01_C, res.0.001_C, res.0.0001_C)
+res.all <- res.all %>% filter(n.site!=0) %>% filter(err !=1) %>% filter(cfreq >= 0.0001)
+
+# res.0.01_A <- res.0.01_A %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.001_A <- res.0.001_A %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.0001_A <- res.0.001_A %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# 
+# res.0.01_B <- res.0.01_B %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.001_B <- res.0.001_B %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.0001_B <- res.0.001_B %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# 
+# res.0.01_C <- res.0.01_C %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.001_C <- res.0.001_C %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+# res.0.0001_C <- res.0.001_C %>% filter(n.site!=0 & err !=1 & cfreq >= 0.0001)
+
+common.genes <- res.all %>% count(gene) %>% filter(n==9) %>% dplyr::select(gene) %>% arrange(gene)
+# corr.pvals <- matrix(data=NA, nrow=nrow(common.genes), ncol=9)
+# rownames(corr.pvals) <- common.genes$gene
+
+corr.pvals <- common.genes %>% 
+  inner_join(res.0.01_A, by='gene') %>% select(gene, pval_0.01_A=pval_SMMAT) %>% 
+  inner_join(res.0.001_A, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A=pval_SMMAT) %>% 
+  inner_join(res.0.0001_A, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A=pval_SMMAT) %>% 
+  
+  inner_join(res.0.01_B, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, pval_0.01_B=pval_SMMAT) %>% 
+  inner_join(res.0.001_B, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, pval_0.01_B, pval_0.001_B=pval_SMMAT) %>% 
+  inner_join(res.0.0001_B, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, pval_0.01_B, pval_0.001_B, pval_0.0001_B=pval_SMMAT) %>%
+  
+  inner_join(res.0.01_C, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, 
+                                               pval_0.01_B, pval_0.001_B, pval_0.0001_B,
+                                               pval_0.01_C=pval_SMMAT) %>%
+  inner_join(res.0.001_C, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, 
+                                               pval_0.01_B, pval_0.001_B, pval_0.0001_B,
+                                               pval_0.01_C, pval_0.001_C=pval_SMMAT) %>%
+  inner_join(res.0.0001_C, by='gene') %>% select(gene, pval_0.01_A, pval_0.001_A, pval_0.0001_A, 
+                                               pval_0.01_B, pval_0.001_B, pval_0.0001_B,
+                                               pval_0.01_C, pval_0.001_C, pval_0.0001_C=pval_SMMAT)
+
+# Correlation matrix
+M <- cor(corr.pvals[, 2:ncol(corr.pvals)], use = 'pairwise.complete.obs', method = 'pearson')
+
+# Correlation plot
+corrplot(M, method = 'shade', order = 'hclust', diag = FALSE, addrect = 2)
+
+# HClust plot
+plot(hclust(d = as.dist(1 - M))) # M = correlation/similarity matrix, so 1 - M = dis-similarity matrix, which is needed for hclust
+
+```
+
+# display aggregate variant gene test tables
+```{r}
+# # display table
+# res.bonf_agg %>% gt() %>%
+#   tab_header(title='Aggregate SMMAT tests at Bonferroni Cutoff', 
+#              subtitle = paste0('Bonferroni Cutoff: 0.05 / (N Tests = ', 
+#                                format(nrow(res),scientific = T, digits = 2), ') = ', format(bonf.cutoff_aggr, scientific=T, digits = 2))) %>%
+#   fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+#   fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+#   # cols_label(Gene='gene') %>%
+#   # tab_style(style = list(cell_text(style='italic')),
+#   #           locations=cells_body(columns=c('Gene'))) %>% 
+#    gt_theme_nytimes()
+
+# display table
+# res.corr_agg %>% gt() %>%
+#   tab_header(title='Aggregate SMMAT tests at Correlation-Based Cutoff', 
+#              subtitle = paste0('Correlation-Based Cutoff: 0.05 / (N Tests = 18,255 genes', 
+#                               ') = ', format(corr.cutoff_aggr, scientific=T, digits = 2))) %>%
+#   fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+#   fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+#   # cols_label(Gene='gene') %>%
+#   # tab_style(style = list(cell_text(style='italic')),
+#   #           locations=cells_body(columns=c('Gene'))) %>% 
+#    gt_theme_nytimes()
+
+varset.labels <- c('Nonsyn_Impact_Mod_High_CADD18_MAF_0.001','Nonsyn_Impact_Mod_High_CADD18_MAF_0.0001','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_CADD18_MAF_0.001','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_CADD18_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01')
+
+varset.labels_pretty <- c('Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.001', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.0001', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.001', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01')
+
+res.corr_agg_narrow$varset <- varset.labels_pretty
+
+res.corr_agg_narrow %>% dplyr::filter(gene != 'TLDC2') %>% # remove false-positive
+  dplyr::select(n.site, n.alt, n.sample.alt, cfreq, pval_burden, pval_theta, pval_SMMAT, qvalue, gene, varset) %>% 
+  gt() %>%
+  fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('n.site','n.alt','n.sample.alt'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('cfreq')) %>% 
+  cols_label(n.site='Number of Qualifying Variant Sites',
+             n.alt='Number of Non-Reference Alleles',
+             n.sample.alt='Number of Individuals with Non-Reference Alleles',
+             pval_burden='P-value Burden Test',
+             pval_theta='P-value SKAT',
+             pval_SMMAT='P-value SMMAT',
+             cfreq='Cumulative Allele Frequency',
+             gene='Gene',
+             qvalue='Q-value SMMAT',
+             varset='Variant Set') %>% 
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c('gene'))) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  # tab_row_group(label = 'Study-wide significance', rows = 1:9, id='A') %>% 
+  # tab_row_group(label = 'Marginal significance', rows = 10:12, id='B') %>% 
+  # row_group_order(groups = c('A','B')) %>% 
+  tab_footnote(footnote = 'Cumulative allele frequency defined as summation of non-reference allele frequencies for all qualifying variant sites in gene', locations = cells_column_labels(columns = c('cfreq'))) %>% 
+  opt_footnote_marks(marks='letters') %>% 
+  tab_footnote(footnote = 'SMMAT p-value combines burden test and SKAT in a single p-value from chi-squared distribution with 4 degrees of freedom',
+               locations = cells_column_labels(columns = c('pval_SMMAT'))) %>% 
+  tab_footnote(footnote = md('_LY75_ / _LY75-CD302_ represent a single naturally occurring readthrough locus producing a single fusion protein'),
+               locations = list(cells_body(columns = c('gene'),
+                                      rows = gene == 'LY75'),
+                                cells_body(columns = c('gene'),
+                                      rows = gene == 'LY75.CD302')))
+
+
+res.corr_agg_marginal %>% 
+  dplyr::select(n.site, n.alt, n.sample.alt, cfreq, pval_burden, pval_theta, pval_SMMAT, qvalue, gene) %>% 
+  gt() %>%
+  fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('n.site','n.alt','n.sample.alt'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('cfreq')) %>% 
+  cols_label(n.site='Number of Qualifying Variant Sites',
+             n.alt='Number of Non-Reference Alleles',
+             n.sample.alt='Number of Individuals with Non-Reference Alleles',
+             pval_burden='P-value Burden Test',
+             pval_theta='P-value SKAT',
+             pval_SMMAT='P-value SMMAT',
+             cfreq='Cumulative Allele Frequency',
+             gene='Gene',
+             qvalue='Q-value SMMAT') %>% 
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c('gene'))) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  # tab_row_group(label = 'Study-wide significance', rows = 1:9, id='A') %>% 
+  # tab_row_group(label = 'Marginal significance', rows = 10:12, id='B') %>% 
+  # row_group_order(groups = c('A','B')) %>% 
+  tab_footnote(footnote = 'Cumulative allele frequency defined as summation of non-reference allele frequencies for all qualifying variant sites in gene', locations = cells_column_labels(columns = c('cfreq'))) %>% 
+  opt_footnote_marks(marks='letters') %>% 
+  tab_footnote(footnote = 'SMMAT p-value combines burden test and SKAT in a single p-value from chi-squared distribution with 4 degrees of freedom',
+               locations = cells_column_labels(columns = c('pval_SMMAT')))
+```
+
+# depletion syndrome genes
+
+# Rare variant enrichment in mtDNA Depletion Syndromes
+Using OMIM defined phenotypic series PS603041
+https://omim.org/phenotypicSeries/PS603041
+```{r}
+library(dplyr)
+library(readr)
+depletion <- read_tsv('~/mito_rare-variant/resources/gene_lists/OMIM-Phenotypic-Series-PS603041.txt') %>%
+  tidyr::separate(`Gene/Locus`, into=c('gene'), sep=',', remove = T)
+depletion_genes <- depletion %>% distinct(gene)
+
+depletion_gene.res <- list()
+for(i in seq_along(depletion_genes$gene)){
+  tmp <- res.all %>% filter(gene == depletion_genes$gene[i])
+  depletion_gene.res[[i]] <-
+    tibble(
+      'gene' = depletion_genes$gene[i],
+      'min_pval_SMMAT' = min(tmp$pval_SMMAT, na.rm = T),
+      'median_pval_SMMAT' = median(tmp$pval_SMMAT, na.rm = T)
+    )
+  message('GENE: ', depletion_genes$gene[i],
+          '\t','Min SMMAT p-value: ', min(tmp$pval_SMMAT))
+          # '\t','Min qvalue: ', min(tmp$qvalue))
+}
+depletion_gene.res <- bind_rows(depletion_gene.res)
+depletion_gene.res %>% filter(median_pval_SMMAT <= 0.05) %>% arrange(min_pval_SMMAT)
+```
+
+
+# Conditional analysis of variants in each gene (pre-run var.breakdown2.R on each gene)
+```{r}
+
+```
+
+# Study comparisons
+```{r}
+chong_genes <- readLines('~/mito_rare-variant/analyses/study_comparisons/chong_et_al_loci.unique.txt')
+hagg_genes <- readLines('~/mito_rare-variant/analyses/study_comparisons/hagg_et_al_loci.txt')
+gwas_genes <- readLines('~/mito_rare-variant/resources/gene_lists/gwas_genes.txt') # autosomal loci only
+rv.genes <- unique(c('SAMHD1','SIRPA','JAK2','TWNK','TOP3A','ACSL1','AHCY','PM20D1','AFAP1L1','SAMHD1','SAMHD1','TWNK','TFAM','JAK2','LY75','CLPX','AK2','CHEK2'))
+
+common_genes <- 
+  Reduce(intersect, list(chong_genes,hagg_genes,gwas_genes,rv.genes))
+```
+
+
+
+
+

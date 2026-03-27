@@ -1,0 +1,246 @@
+---
+title: "UKB RAP PheWAS Analysis"
+output: html_notebook
+author: "Vamsee Pillalamarri"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Required Libraries
+
+```{r load_libraries, message=FALSE, warning=FALSE}
+library(tools)
+library(dplyr)
+library(readr)
+library(parallel)
+library(splines)
+library(doParallel)
+library(logistf)
+library(bigmemory)
+library(biganalytics)
+library(doSNOW)
+```
+
+## Gene-level Variant Breakdown
+
+```{r gene_variant_breakdown}
+source('conditional_variants.breakdown.R')
+
+x.samhd1 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr20.gds'),
+  t = getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+  gene = 'SAMHD1'
+)
+x.twnk <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr10.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr10/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'
+  ),
+  gene = 'TWNK'
+)
+x.tfam <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr10.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr10/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr10.RData'
+  ),
+  gene = 'TFAM'
+)
+x.jak2 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr9.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr9/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr9.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr9.RData'
+  ),
+  gene = 'JAK2'
+)
+x.clpx <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr15.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr15/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr15.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr15.RData'
+  ),
+  gene = 'CLPX'
+)
+x.ly75.cd302 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr2.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr2/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'
+  ),
+  gene = 'LY75.CD302'
+)
+x.ak2 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr1.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr1/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr1.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr1.RData'
+  ),
+  gene = 'AK2'
+)
+x.mgme1 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr20.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr20/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'
+  ),
+  gene = 'MGME1'
+)
+x.polrmt <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr19.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr19/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr19.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr19.RData'
+  ),
+  gene = 'POLRMT'
+)
+x.chek2 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr22.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr19/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr19.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr22.RData'
+  ),
+  gene = 'CHEK2'
+)
+x.cavin2 <- var.breakdown2(
+  gds = seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr2.gds'),
+  # t= getobj('~/mtrv/resources/res/nonsyn.impact_mod_high.AF.max.0.01_chr19/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr19.RData'),
+  t = getobj(
+    '~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr2.RData'
+  ),
+  gene = 'CAVIN2'
+)
+```
+
+## Compile Bonferroni and FDR 10% Significant Variants
+
+```{r compile_significant_variants}
+# Bonferroni significant variants
+bonf.vars <- rbind(
+  x.samhd1$var.bkdwn %>% filter(bonf.sig == 1),
+  x.twnk$var.bkdwn %>% filter(bonf.sig == 1)
+)
+
+# Add gene column
+bonf.vars$gene <- c(
+  rep('SAMHD1', nrow(x.samhd1[[4]] %>% filter(bonf.sig == TRUE))),
+  rep('TWNK', nrow(x.twnk[[4]] %>% filter(bonf.sig == TRUE)))
+)
+
+# FDR 10% significant variants (similar to bonf.vars)
+fdr10pct.vars <- # ... (similar to bonf.vars)
+```
+
+## Generate Synthetic Alleles
+
+```{r synthetic_alleles}
+# Function to get synthetic allele
+get.synthetic_allele <- function(x, level, include_lt6) {
+  # Function implementation
+}
+
+# Generate synthetic alleles for each gene
+v.samhd1 <- get.synthetic_allele(x.samhd1, level = 'bonf', include_lt6 = T)
+v.twnk <- get.synthetic_allele(x.twnk, level = 'bonf', include_lt6 = T)
+
+```
+
+## Combine Synthetic Alleles
+
+```{r combine_synthetic_alleles}
+v <- v.samhd1$syn.allele %>%
+  left_join(v.twnk$syn.allele, by = 'IID') %>% 
+  left_join(v.tfam$syn.allele, by = 'IID') 
+
+
+colnames(v) <- c('IID', 'SAMHD1', 'TWNK', 'TFAM', 'JAK2', 'CLPX', 'LY75.CD302', 'AK2', 'MGME1', 'CAVIN2')
+
+v$syn.allele <- apply(v, 1, function(x) ifelse(any(x == 1, na.rm = T), 1, 0))
+var.carriers <- v %>% filter(syn.allele == 1)
+```
+
+## Prepare Data for PheWAS
+
+```{r prepare_phewas_data}
+data <- create_phewas_data.input2(var.carriers)
+phecodes <- data[[3]]
+sex.check <- data[[2]]
+data <- data[[1]]
+
+k2 <- bigmemory::as.big.matrix(as.data.frame(data))
+data_desc <- bigmemory::describe(k2)
+```
+
+## Run PheWAS
+
+```{r run_phewas, eval=FALSE}
+phewas <- process.glm3.1(
+  phecodes = sample(phecodes),
+  both_sexes = sex.check,
+  data_ = data,
+  ncores = 1,
+  var = 'var',
+  file.conn = './phewas.rv_scored_allele.es_0.3.noJAK2.inFullExomesSet.txt'
+)
+```
+
+## Post-processing: Meta-analysis
+
+```{r meta_analysis, message=FALSE, warning=FALSE}
+library(meta)
+library(poolr)
+source('~/mtrv/cct.R')
+
+# Load individual gene results
+genes <- c('SAMHD1', 'SLC25A37', 'TWNK', 'TFAM')
+s1 <- read_table(paste0('~/mtrv/', genes[1], '/phewas.', genes[1], '.mac_all.inFullExomesSetk.txt'), 
+                 col_types = cols('phecode' = col_character()))
+
+
+# Find common phecodes
+super.set.to_test <- Reduce(intersect, list(s1$phecode, s2$phecode, s3$phecode, s4$phecode))
+
+# Prepare data for meta-analysis
+s_ <- s1 %>%
+  inner_join(s2, by = 'phecode') %>%
+  inner_join(s3, by = 'phecode') %>%
+  inner_join(s4, by = 'phecode') %>%
+  arrange(phecode)
+
+# Perform meta-analysis
+meta.res.df <- data.frame(
+  phecode = character(),
+  beta = numeric(),
+  SE = numeric(),
+  pval.fixed = numeric(),
+  pval.rand = numeric(),
+  p.fisher = numeric(),
+  p.cct = numeric()
+)
+
+for (i in 1:nrow(s_)) {
+  mres <- metagen(
+    TE = c(s_$beta.x[i], s_$beta.y[i], s_$beta.x.x[i], s_$beta.y.y[i]),
+    seTE = c(s_$SE.x[i], s_$SE.y[i], s_$SE.x.x[i], s_$SE.y.y[i])
+  )
+  
+  meta.res.df <- rbind(meta.res.df, data.frame(
+    phecode = s_$phecode[i],
+    beta = mres$TE.random,
+    SE = mres$seTE.random,
+    pval.fixed = mres$pval.fixed,
+    pval.rand = mres$pval.random,
+    p.fisher = poolr::fisher(p = c(s_$p.x[i], s_$p.y[i], s_$p.x.x[i], s_$p.y.y[i]))$p,
+    p.cct = CCT(pvals = c(s_$p.x[i], s_$p.y[i], s_$p.x.x[i], s_$p.y.y[i]))
+  ))
+}
+
+# View results
+meta.res.df %>% 
+  arrange(pval.fixed) %>% 
+  inner_join(phecode_def, by = 'phecode') %>%
+  head(20)
+```

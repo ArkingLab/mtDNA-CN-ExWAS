@@ -1,0 +1,401 @@
+---
+title: "SAMHD1 Single Variant Follow-Up"
+output:
+  html_document:
+    df_print: paged
+---
+
+Investigate single variants for LD pattern
+```{r}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(hrbrthemes)
+library(ggtext)
+library(ggsignif)
+```
+
+# Load info
+```{r}
+# k <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n180256.keep_samples.AnnotatedDataFrame.RData')
+k <- TopmedPipeline::getobj('~/mito_rare-variant/resources/n428k.Subset_removed.nonwhites.nonconsent.exomes_covar_AnnotatedDataFrame.rds')
+k <- as_tibble(k@data) %>% filter(!is.na(arrayCN_PCAodd_m2))
+
+# ukb <- as_tibble(readRDS('~/mito_rare-variant/resources/ukbPheno_12022020_genotypes.rds'))
+# cell.counts <- ukb %>% dplyr::select(IID,Lymphocyte,lLymph,Platelet,Mono,lMono,NucRBC,lNucRBC,Neutrophil,lNeutrophil,Baso,lBaso,Eos,lEos)
+```
+
+# SNP 1 - SPAG4 (20:35619007:C:G) (upstream)
+Read in SPAG4 variants + diff metrics of mtDNA CN + covars
+```{r message=FALSE, warning=FALSE}
+snp1 <- read_delim('~/mito_rare-variant/analyses/lmm_adjusted/single-variant_followups/spag4.samhd1/snp.20:35619007:C:G.raw', delim=' ')
+# snp1 <- snp1 %>% dplyr::select(IID,het=`20:35619007:C:G_HET`)
+snp1 <- snp1 %>% dplyr::select(IID,het=`20:35619007:C:G_G`)
+```
+
+# SNP 2 - SAMHD1 (20_36893060_C_T) (downstream)
+Read in SAMHD1 variants + diff metrics of mtDNA CN + covars
+```{r message=FALSE, warning=FALSE}
+# snp2 <- read_delim('~/mito_rare-variant/single_snp/SAMHD1.snps/snp_20_36893060_C_T.raw', delim=' ')
+snp2 <- read_delim('~/mito_rare-variant/analyses/lmm_adjusted/single-variant_followups/spag4.samhd1/snp.20:36893060:C:T.raw', delim=' ')
+# snp2 <- snp2 %>% dplyr::select(IID,het=`20:36893060:C:T_HET`)
+snp2 <- snp2 %>% dplyr::select(IID,het=`20:36893060:C:T_T`)
+```
+
+# Compare individuals in snp1 to snp2
+```{r}
+# snp1.iids <- snp1 %>% filter(het==1) %>% dplyr::select(IID)
+# snp2.iids <- snp2 %>% filter(het==1) %>% dplyr::select(IID)
+snp1.iids <- snp1 %>% filter(het!=0) %>% dplyr::select(IID)
+snp2.iids <- snp2 %>% filter(het!=0) %>% dplyr::select(IID)
+
+message('# IIDs overlap between SNP1 (SPAG4, upstream) and SNP2 (SAMHD1, downstream): ', 
+        length(which(snp1.iids$IID %in% snp2.iids$IID)), 
+        '\n out of SNP1 HETs: ', length(snp1.iids$IID),
+        '\n and SNP2 HETs: ', length(snp2.iids$IID))
+
+# join snp1 and snp2
+j <- k %>%
+  left_join(snp1, by=c('sample.id'='IID')) %>%
+  left_join(snp2, by=c('sample.id'='IID')) # %>% 
+  # left_join(ukb, by=c('sample.id'='IID'))
+j$het.x <- as.factor(j$het.x)
+j$het.y <- as.factor(j$het.y)
+j <- j %>% mutate(het.xy=as.factor(ifelse(het.x==1 & het.y==1, 1, 0)))
+# j <- j %>% mutate(het.xmiss.y=as.factor(ifelse(is.na(het.x) & het.y==1, 1, 0)))
+# j <- j %>% mutate(het.x.ymiss=as.factor(ifelse(het.x==1 & is.na(het.y), 1, 0)))
+# j <- j %>% mutate(het.x_only=as.factor(ifelse(het.x==1 & het.y==0, 1, 0)))
+# j <- j %>% mutate(het.y_only=as.factor(ifelse(het.x==0 & het.y==1, 1, 0)))
+
+hap.group_idx <- j %>% group_by(het.x, het.y) %>% group_indices()
+j <- j %>% mutate(haplotype=hap.group_idx)
+
+# Adjust mtDNA CN for age,sex,PC1:40,wes.batch
+j$mtDNA_CN.adj <- resid(lm(formula=paste0('arrayCN_PCAodd_m2 ~ age+sex+',paste('PC',1:40,sep='',collapse='+'),'+wes.batch'), data=j))
+```
+# pc plots of snp1,2 vs rest of individuals
+```{r}
+# g <- j %>% ggplot() + geom_point(data=subset(j, het.x==0 & het.y==0), aes(x=PC1,y=PC2), size=0.5, alpha=0.5, color='blue') + geom_point(data=subset(j, het.x==1), aes(x=PC1,y=PC2), size=0.8, alpha=0.8) + geom_point(data=subset(j, het.y==1), aes(x=PC1,y=PC2), size=0.8, alpha=0.8,) #+ 
+#   #theme_ipsum_rc() + scale_color_discrete(name = "SNP", labels = c("20:36893060_C_T", "20:35619007_C_G")) + theme(legend.position = 'bottom') + xlim(c(-25,25)) + ylim(c(-25,25))
+# g
+
+j %>%
+  # inner_join(ukb, by=c('sample.id'='IID')) %>%
+  ggplot(aes(x=PC1,y=PC2)) + 
+  geom_point(alpha=0.5,size=0.2) + 
+  geom_point(data=subset(j,het.xy==1),aes(x=PC1,y=PC2, color='blue'),size=0.3) +
+  # scale_color_continuous(type = 'viridis') +
+  theme_modern_rc() +
+  labs(title='Principal Components Analysis of n=180,256 IIDs', subtitle = 'Red dots: n=126 IIDs with SPAG4 .. SAMHD1 haplotype')+
+  theme(legend.position = 'none')
+
+# j %>% filter(het.xy==1) %>%
+#   # inner_join(ukb, by=c('sample.id'='IID')) %>%
+#   ggplot(aes(x=PC1,y=PC2,color=mtDNA_CN)) + 
+#   geom_point() + 
+#   scale_color_continuous(type = 'viridis') +
+#   theme_modern_rc()
+```
+# mtDNA create haplotype of SNP1 -> SNP2
+# Summarise mtDNA by group
+```{r}
+j %>% group_by(het.x) %>% count()
+j %>% group_by(het.y) %>% count()
+
+# unadjused cn
+j %>% 
+  group_by(het.x,het.y) %>%
+  summarise(n(), round(mean(mtDNA_CN),1)) %>%
+  dplyr::select(SNP1=het.x, SNP2=het.y, n=`n()`, 
+         `Mean mtDNA_CN`=`round(mean(mtDNA_CN), 1)`)
+
+# adjusted cn
+j %>% 
+  group_by(het.x,het.y) %>%
+  dplyr::summarise(n(), round(mean(mtDNA_CN.adj),3)) %>%
+  dplyr::select(SNP1=het.x, SNP2=het.y, n=`n()`, 
+         `Mean Adj mtDNA_CN`=`round(mean(mtDNA_CN.adj), 3)`)
+
+
+# t.test adjusted mtDNA_CN
+t.test(j$mtDNA_CN.adj[j$haplotype==1], j$mtDNA_CN.adj[j$haplotype==2])# comparing 0-0 and 0-1
+t.test(j$mtDNA_CN.adj[j$haplotype==1], j$mtDNA_CN.adj[j$haplotype==4])
+t.test(j$mtDNA_CN.adj[j$haplotype==1], j$mtDNA_CN.adj[j$haplotype==5]) # comparing 0-0 and 1-1
+# t.test(j$mtDNA_CN.adj[j$haplotype==1], j$mtDNA_CN.adj[j$haplotype==6]) 
+
+# Combine 1-1 and 2-2 together (adding in the homozygote) and test CN association
+j$haplotype2 <- rep(0,nrow(j))
+j$haplotype2[which(j$haplotype==5)] <- 1
+j$haplotype2[which(j$haplotype==6)] <- 1
+t.test.res <- t.test(j$mtDNA_CN.adj[j$haplotype==1], j$mtDNA_CN.adj[j$haplotype2==1]) # comparing 0-0 and [1-1 + 2-2]
+# The association to mtDNA-CN was only significant among carriers of both variants
+t.test.res$p.value
+```
+# plot mtDNA by group
+```{r}
+# create groups based on SNP1 and SNP2
+hap.group_idx <- j %>% group_by(het.x, het.y) %>% group_indices()
+hap.group_size <- j %>% group_by(het.x, het.y) %>% group_size()
+give.n <- function(x){
+  # https://stackoverflow.com/questions/28846348/add-number-of-observations-per-group-in-ggplot2-boxplot
+  return(c(y = -5, label = length(x))) 
+  # experiment with the multiplier to find the perfect position
+}
+
+# boxplot of mtDNA CN by haplotype
+j %>% 
+  mutate(haplotype=hap.group_idx) %>% 
+  ggplot(aes(x=as.factor(haplotype), y=mtDNA_CN.adj)) +
+  # geom_hline(yintercept = 0, linetype='dashed', color='grey') +
+  geom_boxplot() +
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=5, color="red", fill="red") +
+  stat_summary(fun.data = give.n, geom="text", size=4, color="red", position = position_dodge(width = 0.75)) +
+  scale_x_discrete(breaks=c(1:8),labels=c('0-0','0-1','0-NA','1-0','1-1','2-2','NA-0','NA-1')) +
+  geom_signif(
+    comparisons = list(c(1,2),c(1,5)),
+    map_signif_level = TRUE
+  ) +
+  labs(title = 'Haplotype between 20:35619007:C:G (SPAG4) and 20:36893060:C:T (SAMHD1)') +
+  theme_ipsum_rc() +
+  theme(plot.title = element_text(size=12)) + 
+  xlab('Haplotype') +
+  ylab('Adjusted mtDNA-CN (SD)')
+
+# boxplot of mtDNA CN by haplotype (sex-specific)
+j %>% 
+  mutate(haplotype=hap.group_idx) %>% 
+  ggplot(aes(x=as.factor(haplotype), y=mtDNA_CN.adj, fill=as.factor(sex))) +
+  # geom_hline(yintercept = 0, linetype='dashed', color='grey') +
+  geom_boxplot() +
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=5, color="red", fill="red") +
+  stat_summary(fun.data = give.n, geom="text", size=3, color="blue", position = position_dodge(width = 0.75)) +
+  scale_x_discrete(breaks=c(1:6),labels=c('0-0','0-1','0-NA','1-0','1-1','NA-0')) +
+  geom_signif(
+    comparisons = list(c(1,2),c(1,5)),
+    map_signif_level = TRUE
+  ) +
+  labs(title = 'Haplotype between 20:35619007:C:G (SPAG4) and 20:36893060:C:T (SAMHD1)') +
+  theme_ipsum_rc() +
+  theme(plot.title = element_text(size=12))
+
+
+# het.xy vs all density distributions
+j %>% 
+  dplyr::select(sample.id, het.xy, age, sex, mtDNA_CN, mtDNA_CN.adj) %>%
+  ggplot(aes(x=mtDNA_CN.adj,color=het.xy,fill=het.xy)) + 
+  geom_density(alpha=0.5) + 
+  geom_vline(xintercept = 0.000201, linetype='dashed', color='white') + 
+  geom_vline(xintercept = 0.801, linetype='dashed', color='red') + 
+  labs(title = 'mtDNA CN by Haplotype') +
+  theme_modern_rc()
+```
+
+# Investigate read depth of genoptyped variants across haplotype
+```{r}
+```
+
+# Figure 2 and Table S7 - SAMHD1 betas vs betas for phecode 174
+```{r}
+require(splines)
+
+# on RAP
+center <- getobj('~/ukb/UKB -mtDNA_2022/data_tables/ukb.center.rds')
+
+dat <- getobj('~/ukb/UKB -mtDNA_2022/data_tables/n502485.ukb.data.rds')$ukb.data %>% 
+  select(id, in.white.British.ancestry.subset, used.in.pca.calculation)
+
+k <- getobj('~/ukb/UKB -mtDNA_2022/rv/resources/n428k.Subset_removed.nonwhites.nonconsent.exomes_covar_AnnotatedDataFrame.rds')@data %>% as_tibble()
+k <- k %>% filter(!is.na(arrayCN_PCAodd_m2))
+
+# Phecode 174 (and variants)
+p <- getobj('~/ukb/UKB -mtDNA_2022/data_tables/n502485.icd10_phecodes.rds') %>% as_tibble()
+colnames(p)[grep(pattern='174', x = colnames(p))]
+p_ <- p %>% select(id, all_of(colnames(p)[grep(pattern='174', x = colnames(p))]))
+
+
+# Get variant alleles for SAMHD1
+source('~/mtrv/var.breakdown2.R')
+x.samhd1 <- 
+  var.breakdown2(gds=seqOpen('~/mtrv/resources/gds/UKBexomeQQFE_chr20.gds', allow.duplicate=T), t=getobj('~/mtrv/resources/res/rv_assoc.aggr.nonsyn.impact_mod_high.SMMAT.AF.max.0.01.chr20.RData'), gene='SAMHD1')
+
+# bon-sig SAMHD1 variants
+vars_names=c('var.330053.pos.20_36893060_mac_304','var.330236.pos.20_36898455_mac_599','var.330977.pos.20_36930783_mac_197','var.330419.pos.20_36905431_mac_104')
+vars <- x.samhd1[[2]] %>% select(sample.id, all_of(vars_names))
+vars$var.330053.pos.20_36893060_mac_304[which(vars$var.330053.pos.20_36893060_mac_304 == 2)] <- 1
+vars$var.330053.pos.20_36893060_mac_304 <- as.factor(vars$var.330053.pos.20_36893060_mac_304)
+vars$var.330236.pos.20_36898455_mac_599 <- as.factor(vars$var.330236.pos.20_36898455_mac_599)
+vars$var.330977.pos.20_36930783_mac_197 <- as.factor(vars$var.330977.pos.20_36930783_mac_197)
+vars$var.330419.pos.20_36905431_mac_104 <- as.factor(vars$var.330419.pos.20_36905431_mac_104)
+
+k_ <- k %>%
+  inner_join(dat, by=c('sample.id'='id')) %>% 
+  inner_join(center, by=c('sample.id'='IID')) %>% 
+  inner_join(p_, by=c('sample.id'='id')) %>% 
+  inner_join(vars, by='sample.id')
+k_$sex <- as.factor(k_$sex)
+k_$Center <- as.factor(k_$Center)
+k_$wes.batch <- as.factor(k_$wes.batch)
+
+# there are 203 male (out of 190324 males) and 17,517 female (out of 225098 females) 
+# cases, split them to test separately
+k_males <- k_ %>% filter(sex=="M")
+k_females <- k_ %>% filter(sex=="F")
+
+# All four variants in same model, effects on CN re-measured w/ just these four in all individuals
+f.CN <- paste0('arrayCN_PCAodd_m2 ~ ', paste0(vars_names, collapse='+'), ' + ns(age, df=2) + sex + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t.CN <- lm(formula(f.CN), data=k_)
+
+```
+
+# Variant effects on breast cancer phecode 174 (sex is adjusted)
+```{r}
+# var.330053.pos.20_36893060_mac_304
+f1 <- paste0('`', phecode, '` ~ ', vars_names[1], ' + ns(age, df=2) + sex + Center + ', paste0('PC', 1:40, collapse='+'))
+t1 <- glm(formula(f1), data=k_, family=binomial(link='logit'))
+
+# var.330236.pos.20_36898455_mac_599
+f2 <- paste0('`', phecode, '` ~ ', vars_names[2], ' + ns(age, df=2) + sex + Center + ', paste0('PC', 1:40, collapse='+'))
+t2 <- glm(formula(f2), data=k_, family=binomial(link='logit'))
+
+# var.330977.pos.20_36930783_mac_197
+f3 <- paste0('`', phecode, '` ~ ', vars_names[3], ' + ns(age, df=2) + sex + Center + ', paste0('PC', 1:40, collapse='+'))
+t3 <- glm(formula(f3), data=k_, family=binomial(link='logit'))
+
+# var.330419.pos.20_36905431_mac_104
+f4 <- paste0('`', phecode, '` ~ ', vars_names[4], ' + ns(age, df=2) + sex + Center + ', paste0('PC', 1:40, collapse='+'))
+t4 <- glm(formula(f4), data=k_, family=binomial(link='logit'))
+
+```
+
+# MR (non-stratified)
+```{r}
+# stats for these variants in this order
+# "var.330053.pos.20_36893060_mac_304" "var.330236.pos.20_36898455_mac_599" "var.330977.pos.20_36930783_mac_197" "var.330419.pos.20_36905431_mac_104"
+vars_names=c('var.330053.pos.20_36893060_mac_304','var.330236.pos.20_36898455_mac_599','var.330977.pos.20_36930783_mac_197','var.330419.pos.20_36905431_mac_104')
+betas_CN = c(0.651, 0.244, 0.322, 0.365) # these betas computed elsewhere
+SEs_CN = c(0.0566, 0.0403, 0.0706, 0.0967)
+
+betas_phecode = c(0.8931861, 0.3141633, 0.781027, 0.3374798)
+SEs_phecode = c(0.2171086, 0.1825304, 0.2521135, 0.4338091)
+
+mr.in <- mr_input(bx=betas_CN,
+         bxse=SEs_CN,
+         by=betas_phecode,
+         byse=SEs_phecode,
+         exposure = 'mtDNA-CN',
+         outcome = 'Phecode 174 (Breast Cancer)',
+         snps=vars_names)
+mrivw <- mr_ivw(mr.in)
+mr_plot(mr.in, labels = T, interactive = T)
+```
+
+# Carrier counts in cases by sex
+# NOTE: Males don't have enough carriers to do MR, so females-only.
+```{r}
+# males
+k_males %>% count(`174`, var.330053.pos.20_36893060_mac_304) # 1/203 carriers
+k_males %>% count(`174`, var.330236.pos.20_36898455_mac_599) # 1/203 carriers
+k_males %>% count(`174`, var.330419.pos.20_36905431_mac_104) # 0 / 203 carriers
+k_males %>% count(`174`, var.330977.pos.20_36930783_mac_197) # 0 / 203 carriers
+
+# females
+k_males %>% count(`174`, var.330053.pos.20_36893060_mac_304) # 25/17517 carriers
+k_males %>% count(`174`, var.330236.pos.20_36898455_mac_599) # 33/17517 carriers
+k_males %>% count(`174`, var.330419.pos.20_36905431_mac_104) # 6/17517 carriers
+k_males %>% count(`174`, var.330977.pos.20_36930783_mac_197) # 19/17517 carriers
+```
+
+# Variant effects on breast cancer phecode 174
+# in Females only
+```{r}
+# var.330053.pos.20_36893060_mac_304
+f1 <- paste0('`', phecode, '` ~ ', vars_names[1], ' + ns(age, df=2) + Center + ', paste0('PC', 1:40, collapse='+'))
+# t1.males <- glm(formula(f1), data=k_males, family=binomial(link='logit'))
+t1.females <- glm(formula(f1), data=k_females, family=binomial(link='logit'))
+
+# var.330236.pos.20_36898455_mac_599
+f2 <- paste0('`', phecode, '` ~ ', vars_names[2], ' + ns(age, df=2) + Center + ', paste0('PC', 1:40, collapse='+'))
+# t2.males <- glm(formula(f2), data=k_males, family=binomial(link='logit'))
+t2.females <- glm(formula(f2), data=k_females, family=binomial(link='logit'))
+
+# var.330977.pos.20_36930783_mac_197
+f3 <- paste0('`', phecode, '` ~ ', vars_names[3], ' + ns(age, df=2) + Center + ', paste0('PC', 1:40, collapse='+'))
+# t3.males <- glm(formula(f3), data=k_males, family=binomial(link='logit'))
+t3.females <- glm(formula(f3), data=k_females, family=binomial(link='logit'))
+
+# var.330419.pos.20_36905431_mac_104
+f4 <- paste0('`', phecode, '` ~ ', vars_names[4], ' + ns(age, df=2) + Center + ', paste0('PC', 1:40, collapse='+'))
+# t4.males <- glm(formula(f4), data=k_males, family=binomial(link='logit'))
+t4.females <- glm(formula(f4), data=k_females, family=binomial(link='logit'))
+
+# put all four variants in same model
+f <- paste0('`', phecode, '` ~ ', paste0(vars_names, collapse='+'), ' + ns(age, df=2) + Center + ', paste0('PC', 1:40, collapse='+'))
+t.females <- glm(formula(f), data=k_females, family=binomial(link='logit'))
+
+```
+
+# Variant effects on mtDNA-CN in females
+```{r}
+# var.330053.pos.20_36893060_mac_304
+f1.CN.females <- paste0('arrayCN_PCAodd_m2 ~ ', vars_names[1], ' + ns(age, df=2) + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t1.CN.females <- lm(formula(f1.CN.females), data=k_females)
+
+f2.CN.females <- paste0('arrayCN_PCAodd_m2 ~ ', vars_names[2], ' + ns(age, df=2) + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t2.CN.females <- lm(formula(f2.CN.females), data=k_females)
+
+f3.CN.females <- paste0('arrayCN_PCAodd_m2 ~ ', vars_names[3], ' + ns(age, df=2) + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t3.CN.females <- lm(formula(f3.CN.females), data=k_females)
+
+f4.CN.females <- paste0('arrayCN_PCAodd_m2 ~ ', vars_names[4], ' + ns(age, df=2) + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t4.CN.females <- lm(formula(f4.CN.females), data=k_females)
+
+# All four variants in same model
+f.CN.females <- paste0('arrayCN_PCAodd_m2 ~ ', paste0(vars_names, collapse='+'), ' + ns(age, df=2) + wes.batch + ', paste0('PC', 1:40, collapse='+'))
+t.CN.females <- lm(formula(f.CN.females), data=k_females)
+
+```
+
+# Do MR in females only (225k)
+```{r}
+# stats for these variants in this order
+# "var.330053.pos.20_36893060_mac_304" "var.330236.pos.20_36898455_mac_599" "var.330977.pos.20_36930783_mac_197" "var.330419.pos.20_36905431_mac_104"
+vars_names=c('var.330053.pos.20_36893060_mac_304','var.330236.pos.20_36898455_mac_599','var.330977.pos.20_36930783_mac_197','var.330419.pos.20_36905431_mac_104')
+# betas_CN = c(0.651, 0.244, 0.322, 0.365)
+# SEs_CN = c(0.0566, 0.0403, 0.0706, 0.0967)
+
+betas_CN = c(0.7594088, 0.2037758, 0.3669437, 0.3197904)
+SEs_CN = c(0.07964875, 0.05482837, 0.09068856, 0.1282127)
+
+betas_phecode = c(0.8618125, 0.2903113, 0.7933809, 0.3521591)
+SEs_phecode = c(0.2212898, 0.1852301, 0.2525916, 0.4343592)
+
+mr.in <- mr_input(bx=betas_CN,
+         bxse=SEs_CN,
+         by=betas_phecode,
+         byse=SEs_phecode,
+         exposure = 'mtDNA-CN',
+         outcome = 'Phecode 174 (Breast Cancer)',
+         snps=vars_names)
+mrivw <- mr_ivw(mr.in)
+mr_plot(mr.in, labels = T, interactive = T)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

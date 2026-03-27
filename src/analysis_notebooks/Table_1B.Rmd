@@ -1,0 +1,156 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# aggregate results (new2)
+```{r}
+# uses nonsyn.impact_mod_high, nonsyn.impact_mod_high_CADD18, nonsyn.impact_high_pLOF variant sets
+require(dplyr)
+require(readr)
+require(qvalue)
+res <- read_tsv('/Users/vkp/mito_rare-variant/resources/results/burden/res.all.nonsyn.impact_mod_high_plus_nonsyn.impact_mod_high_CADD18_plus_nonsyn.impact_high_pLOF.txt')
+qobj <- qvalue(res$pval_SMMAT)
+res$qvalue <- qobj$qvalues
+
+bonf.cutoff_aggr <- 0.05 / nrow(res)
+corr.cutoff_aggr_wide <- 0.05 / length(unique(res$gene)) # based on unique cadd 18 0.001 genes tested at cfreq >= 0.0001
+corr.cutoff_aggr <- 0.05 / (length(unique(res$gene))*4) # based on unique cadd 18 0.001 genes tested at cfreq >= 0.0001
+corr.cutoff_aggr_narrow <- 0.05 / (18557 * 4)
+
+res.bonf_agg <- res %>% # bonf-sig
+  filter(pval_SMMAT <= bonf.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_wide <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_narrow <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr_narrow) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.corr_agg_marginal <- res %>% # corr-based
+  filter(pval_SMMAT <= corr.cutoff_aggr_wide) %>% 
+  arrange(pval_SMMAT) %>% 
+  distinct(gene, .keep_all=T) %>% 
+  dplyr::slice(lower = 11, upper = 13) %>% filter(gene !='TLDC2')
+
+res.fdr_0.1 <- res %>% # fdr 10%
+    filter(qvalue <= 0.1) %>% 
+    arrange(pval_SMMAT) %>% 
+    distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+
+res.fdr_0.3 <- res %>% # fdr 30%
+    filter(qvalue <= 0.3) %>% 
+    arrange(pval_SMMAT) %>% 
+    distinct(gene, .keep_all=T) %>% filter(gene !='TLDC2')
+```
+
+# display aggregate variant gene test tables
+```{r}
+# # display table
+# res.bonf_agg %>% gt() %>%
+#   tab_header(title='Aggregate SMMAT tests at Bonferroni Cutoff', 
+#              subtitle = paste0('Bonferroni Cutoff: 0.05 / (N Tests = ', 
+#                                format(nrow(res),scientific = T, digits = 2), ') = ', format(bonf.cutoff_aggr, scientific=T, digits = 2))) %>%
+#   fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+#   fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+#   # cols_label(Gene='gene') %>%
+#   # tab_style(style = list(cell_text(style='italic')),
+#   #           locations=cells_body(columns=c('Gene'))) %>% 
+#    gt_theme_nytimes()
+
+# display table
+# res.corr_agg %>% gt() %>%
+#   tab_header(title='Aggregate SMMAT tests at Correlation-Based Cutoff', 
+#              subtitle = paste0('Correlation-Based Cutoff: 0.05 / (N Tests = 18,255 genes', 
+#                               ') = ', format(corr.cutoff_aggr, scientific=T, digits = 2))) %>%
+#   fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+#   fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+#   # cols_label(Gene='gene') %>%
+#   # tab_style(style = list(cell_text(style='italic')),
+#   #           locations=cells_body(columns=c('Gene'))) %>% 
+#    gt_theme_nytimes()
+
+varset.labels <- c('Nonsyn_Impact_Mod_High_CADD18_MAF_0.001','Nonsyn_Impact_Mod_High_CADD18_MAF_0.0001','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_CADD18_MAF_0.001','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01','Nonsyn_Impact_Mod_High_CADD18_MAF_0.01','Nonsyn_Impact_Mod_High_MAF_0.01')
+
+varset.labels_pretty <- c('Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.001', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.0001', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.001', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01', 'Nonsynonymous, CADD-PHRED ≥ 18, MAF ≤ 0.01', 'Nonsynonymous, MAF ≤ 0.01')
+
+res.corr_agg_narrow$varset <- varset.labels_pretty
+
+t1b_gt <- res.corr_agg_narrow %>% dplyr::filter(gene != 'TLDC2') %>% # remove false-positive
+  dplyr::select(n.site, n.alt, n.sample.alt, cfreq, pval_burden, pval_theta, pval_SMMAT, qvalue, gene, varset) %>% 
+  gt() %>%
+  fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('n.site','n.alt','n.sample.alt'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('cfreq')) %>% 
+  cols_label(n.site='Number of Qualifying Variant Sites',
+             n.alt='Number of Non-Reference Alleles',
+             n.sample.alt='Number of Individuals with Non-Reference Alleles',
+             pval_burden='P-value Burden Test',
+             pval_theta='P-value SKAT',
+             pval_SMMAT='P-value SMMAT',
+             cfreq='Cumulative Allele Frequency',
+             gene='Gene',
+             qvalue='Q-value SMMAT',
+             varset='Variant Set') %>% 
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c('gene'))) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  # tab_row_group(label = 'Study-wide significance', rows = 1:9, id='A') %>% 
+  # tab_row_group(label = 'Marginal significance', rows = 10:12, id='B') %>% 
+  # row_group_order(groups = c('A','B')) %>% 
+  tab_footnote(footnote = 'Cumulative allele frequency defined as summation of non-reference allele frequencies for all qualifying variant sites in gene', locations = cells_column_labels(columns = c('cfreq'))) %>% 
+  opt_footnote_marks(marks='letters') %>% 
+  tab_footnote(footnote = 'SMMAT p-value combines burden test and SKAT in a single p-value from chi-squared distribution with 4 degrees of freedom',
+               locations = cells_column_labels(columns = c('pval_SMMAT'))) %>% 
+  tab_footnote(footnote = md('_LY75_ / _LY75-CD302_ represent a single naturally occurring readthrough locus producing a single fusion protein'),
+               locations = list(cells_body(columns = c('gene'),
+                                      rows = gene == 'LY75'),
+                                cells_body(columns = c('gene'),
+                                      rows = gene == 'LY75.CD302')))
+
+# Convert to HTML to read into Word as a table
+t1b_html <- t1b_gt %>% gt::as_raw_html()
+t1b_html %>% write_lines('~/mito_rare-variant/analyses/Table_1B.html')
+t1b_gt
+```
+
+
+```{r}
+supp_table_s3 <- res.corr_agg_marginal %>% 
+  dplyr::select(n.site, n.alt, n.sample.alt, cfreq, pval_burden, pval_theta, pval_SMMAT, qvalue, gene) %>% 
+  gt() %>%
+  fmt_scientific(columns = c('pval_burden', 'pval_theta','pval_SMMAT','qvalue'), decimals = 2) %>%
+  fmt_number(columns = c('cfreq'),decimals=5, drop_trailing_zeros = T) %>%
+  fmt_number(columns = c('n.site','n.alt','n.sample.alt'), sep_mark = ',', decimals = 0) %>% 
+  fmt_percent(columns = c('cfreq')) %>% 
+  cols_label(n.site='Number of Qualifying Variant Sites',
+             n.alt='Number of Non-Reference Alleles',
+             n.sample.alt='Number of Individuals with Non-Reference Alleles',
+             pval_burden='P-value Burden Test',
+             pval_theta='P-value SKAT',
+             pval_SMMAT='P-value SMMAT',
+             cfreq='Cumulative Allele Frequency',
+             gene='Gene',
+             qvalue='Q-value SMMAT') %>% 
+  tab_style(style = list(cell_text(style='italic')),
+            locations=cells_body(columns=c('gene'))) %>% 
+  cols_align(align='auto', columns = everything()) %>% 
+  # tab_row_group(label = 'Study-wide significance', rows = 1:9, id='A') %>% 
+  # tab_row_group(label = 'Marginal significance', rows = 10:12, id='B') %>% 
+  # row_group_order(groups = c('A','B')) %>% 
+  tab_footnote(footnote = 'Cumulative allele frequency defined as summation of non-reference allele frequencies for all qualifying variant sites in gene', locations = cells_column_labels(columns = c('cfreq'))) %>% 
+  opt_footnote_marks(marks='letters') %>% 
+  tab_footnote(footnote = 'SMMAT p-value combines burden test and SKAT in a single p-value from chi-squared distribution with 4 degrees of freedom',
+               locations = cells_column_labels(columns = c('pval_SMMAT')))
+
+# Display tables
+supp_table_s3
+
+```
